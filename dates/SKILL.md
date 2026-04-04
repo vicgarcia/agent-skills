@@ -1,31 +1,16 @@
 ---
 name: dates
-description: Master date and time operations using system commands. CRITICAL for accurate temporal awareness - LLMs have unreliable internal date knowledge due to training cutoffs. Always use `date` for current time and `cal` for calendar visualization/day-of-week calculations.
-compatibility: Built-in POSIX commands available on all Unix/macOS/Linux systems.
+description: Date/time operations via system commands. LLMs have unreliable internal date knowledge—always use `date` for current time and `cal` for calendar visualization.
+compatibility: POSIX (Unix/macOS/Linux)
 ---
 
-# Date & Time Mastery for AI Agents
+# Date & Time for AI Agents
 
-## Why This Matters
-
-LLMs don't know what time it is. Training cutoffs and cognitive biases mean we might hallucinate dates months or years off. **The `date` command is ground truth.** Run it before any temporal task. This is law.
-
-```bash
-date    # DO THIS FIRST. ALWAYS.
-```
+**Run `date` before any temporal task.** LLMs hallucinate dates due to training cutoffs. The `date` command is ground truth.
 
 ---
 
 ## The `date` Command
-
-### Current Date/Time
-
-```bash
-date                              # Full: Fri Mar 14 10:42:17 PDT 2025
-date +"%Y-%m-%d"                  # 2025-03-14
-date -u +"%Y-%m-%dT%H:%M:%SZ"     # ISO 8601 UTC: 2025-03-14T17:42:17Z
-date +%s                          # Unix epoch: 1710431537
-```
 
 ### Common Formats
 
@@ -40,8 +25,9 @@ date +%s                          # Unix epoch: 1710431537
 | Time (12h) | `date +"%I:%M %p"` | `10:42 AM` |
 | Day of week | `date +"%A"` | `Friday` |
 | Week number | `date +"%V"` | `11` |
+| Unix epoch | `date +%s` | `1710431537` |
 
-### Key Format Codes
+### Format Codes
 
 `%Y` year, `%m` month, `%d` day, `%H` hour(24), `%I` hour(12), `%M` min, `%S` sec, `%A` weekday, `%a` short day, `%B` month name, `%b` short month, `%p` AM/PM, `%Z` timezone, `%z` offset, `%s` epoch, `%V` week#
 
@@ -60,10 +46,8 @@ date -d "+2 months"
 date -d "next Friday"
 date -d "last Monday"
 date -d "+30 days" +"%Y-%m-%d"
-date -d "2025-12-25" +"%A"              # Day of week for specific date
-
-# Month boundaries
-date -d "$(date +%Y-%m-01) +1 month -1 day" +"%Y-%m-%d"   # Last day of month
+date -d "2025-12-25" +"%A"                            # Day of week for date
+date -d "$(date +%Y-%m-01) +1 month -1 day" +"%Y-%m-%d"  # Last day of month
 ```
 
 ### macOS/BSD (`-v` flag)
@@ -75,12 +59,8 @@ date -v+2m                              # 2 months from now
 date -v+fri                             # Next Friday
 date -v-mon                             # Previous Monday
 date -v+3d +"%Y-%m-%d"                  # Formatted
-
-# Day of week for specific date
-date -j -f "%Y-%m-%d" "2025-12-25" +"%A"
-
-# Month boundaries
-date -v1d -v+1m -v-1d +"%Y-%m-%d"       # Last day of month
+date -j -f "%Y-%m-%d" "2025-12-25" +"%A"   # Day of week for date
+date -v1d -v+1m -v-1d +"%Y-%m-%d"          # Last day of month
 ```
 
 ### Cross-Platform
@@ -99,17 +79,15 @@ fi
 
 ```bash
 date +"%Z %z"                           # Current: PDT -0700
-TZ="UTC" date                           # Show UTC
-TZ="America/New_York" date              # Show Eastern
-TZ="Europe/London" date                 # Show UK
-TZ="Asia/Tokyo" date                    # Show Japan
+TZ="UTC" date
+TZ="America/New_York" date
+TZ="Europe/London" date
+TZ="Asia/Tokyo" date
 ```
 
 ---
 
 ## The `cal` Command
-
-### Calendar Views
 
 ```bash
 cal                   # Current month
@@ -136,49 +114,18 @@ Use column headers to find day of week. The 25th falls under `Tu` = Tuesday.
 
 ---
 
-## Common Tasks
-
-### What day is [DATE]?
+## Common Calculations
 
 ```bash
-# GNU
-date -d "2025-12-25" +"%A"
-
-# macOS
-date -j -f "%Y-%m-%d" "2025-12-25" +"%A"
-
-# Or visually
-cal 12 2025
-```
-
-### Days until deadline
-
-```bash
-# GNU
+# Days until deadline
 deadline="2025-04-15"
-echo $(( ($(date -d "$deadline" +%s) - $(date +%s)) / 86400 )) days
+echo $(( ($(date -d "$deadline" +%s) - $(date +%s)) / 86400 )) days              # GNU
+echo $(( ($(date -j -f "%Y-%m-%d" "$deadline" +%s) - $(date +%s)) / 86400 )) days # macOS
 
-# macOS
-deadline="2025-04-15"
-echo $(( ($(date -j -f "%Y-%m-%d" "$deadline" +%s) - $(date +%s)) / 86400 )) days
-```
-
-### Next occurrence of a day
-
-```bash
-date -d "next Tuesday" +"%A, %B %d"     # GNU
-date -v+tue +"%A, %B %d"                 # macOS
-```
-
-### Current quarter
-
-```bash
+# Current quarter
 echo "Q$(( ($(date +%-m) - 1) / 3 + 1 )) $(date +%Y)"
-```
 
-### Convert Unix timestamp
-
-```bash
+# Convert Unix timestamp
 date -d "@1710431537"                   # GNU
 date -r 1710431537                      # macOS
 ```
@@ -201,12 +148,10 @@ date -r 1710431537                      # macOS
 
 ---
 
-## Rules for Agents
+## Agent Rules
 
-1. **Run `date` before any temporal task** - never trust your internal sense of time
-2. **Use ISO 8601 for unambiguous dates** - `2025-03-04` not `03/04`
-3. **Verify user-provided dates** - if they say "Monday the 15th", check it
-4. **Use `cal` to visualize** - helps users understand scheduling context
-5. **Know your platform** - GNU uses `-d`, macOS uses `-v`
-
-When in doubt: `date`. Always `date`. Trust `date`.
+1. **Run `date` before any temporal task** — never trust your internal sense of time
+2. **Use ISO 8601 for unambiguous dates** — `2025-03-04` not `03/04`
+3. **Verify user-provided dates** — if they say "Monday the 15th", check it
+4. **Use `cal` to visualize** — helps users understand scheduling context
+5. **Know your platform** — GNU uses `-d`, macOS uses `-v`
