@@ -1,5 +1,5 @@
 ---
-name: at
+name: atd
 description: Schedule one-time future command execution using the Unix at command. Schedule jobs at specific times, list pending jobs, view job contents, and remove scheduled jobs. Use for deferred task execution, follow-up actions, and delayed operations.
 compatibility: Requires 'at' package installed and 'atd' daemon running. Standard on most Unix systems.
 ---
