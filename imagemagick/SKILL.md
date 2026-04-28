@@ -196,28 +196,6 @@ magick base.jpg overlay.png -gravity Center -composite output.jpg
 magick base.jpg overlay.png -gravity SouthEast -geometry +10+10 -composite output.jpg
 ```
 
-### Compositing operators
-
-`-compose` controls how layers blend:
-
-```bash
-magick base.jpg overlay.png -compose Multiply -composite output.jpg
-magick base.jpg overlay.png -compose Screen -composite output.jpg
-magick base.jpg overlay.png -compose Over -composite output.jpg     # Default (alpha-aware)
-```
-
-Common operators: `Over`, `Multiply`, `Screen`, `Overlay`, `Difference`, `Dissolve`.
-
-### Watermark with opacity
-
-To apply a semi-transparent image watermark:
-
-```bash
-magick base.jpg \( watermark.png -evaluate multiply 0.4 \) -gravity SouthEast -geometry +15+15 -composite output.jpg
-```
-
-`\( ... \)` groups operations on the watermark before compositing. `-evaluate multiply 0.4` reduces opacity to 40%.
-
 ### Text annotation
 
 `-annotate` draws text at a position. `-gravity` sets the anchor, `-geometry` offsets from it:
@@ -240,31 +218,6 @@ magick input.jpg \
   output.jpg
 ```
 
-Shadow/outline for contrast:
-
-```bash
-magick input.jpg \
-  -font Helvetica -pointsize 48 \
-  -fill black -annotate +21+21 "Label" \
-  -fill white -annotate +20+20 "Label" \
-  output.jpg
-```
-
-Draw the same text twice — once in black offset by 1px, then in white on top.
-
-### Text watermark (diagonal)
-
-Apply a rotated text watermark across the image:
-
-```bash
-magick input.jpg \
-  -fill 'rgba(128,128,128,0.3)' -font Helvetica -pointsize 48 \
-  -gravity Center -annotate 45x45+0+0 "DRAFT" \
-  output.jpg
-```
-
-The `-annotate` geometry prefix `AxB+X+Y` sets x-rotation and y-shear in degrees. For a clean diagonal, use matching values — `45x45` rotates the text 45° counter-clockwise. Adjust the angle to taste.
-
 ### Contact sheet / montage
 
 `montage` is a subcommand of `magick` that arranges multiple images into a labeled grid. It has its own option set — do not mix in standard `magick` processing options (like `-resize` or `-blur`) outside of parenthesized image groups:
@@ -286,22 +239,21 @@ magick montage *.jpg -tile 4x3 -geometry 200x200+5+5 output-sheet.jpg
 Add labels under each image:
 
 ```bash
-magick montage *.jpg -tile 4x -geometry 200x200+4+4 -label '%f' output-sheet.jpg
+magick montage -label '%f' *.jpg -tile 4x -geometry 200x200+4+4 output-sheet.jpg
 ```
 
-`-label '%f'` uses the filename. Other tokens: `%w` width, `%h` height, `%b` file size, `%[EXIF:DateTimeOriginal]` EXIF date.
+`-label` must come **before** the inputs — it is a per-image setting. Placed after, it applies to nothing. `%f` uses the filename. Other tokens: `%w` width, `%h` height, `%b` file size.
 
 Style the contact sheet:
 
 ```bash
-magick montage *.jpg \
+magick montage -label '%f' *.jpg \
   -tile 4x \
   -geometry 200x200+6+6 \
   -background '#1a1a1a' \
   -fill white \
   -font Helvetica \
   -pointsize 11 \
-  -label '%f' \
   output-sheet.jpg
 ```
 
@@ -339,14 +291,6 @@ WebP uses the same `-quality` flag as JPEG (1–100), but the encoding is differ
 ```bash
 magick input.png -define webp:lossless=true output.webp
 ```
-
-### AVIF quality
-
-```bash
-magick input.jpg -quality 60 output.avif
-```
-
-AVIF quality uses the same 1–100 scale as JPEG but encoding behavior can vary by codec and build. Start around 60 and adjust by result. AVIF requires ImageMagick built with AVIF/HEIF support — verify with `magick -list format | grep AVIF` before using.
 
 ### PNG compression
 
@@ -445,34 +389,6 @@ magick input.jpg -sharpen 0x1.5 output.jpg         # Sharpen, sigma=1.5
 magick input.jpg -unsharp 0x1+0.5+0 output.jpg     # Unsharp mask (common for photos)
 ```
 
-### Noise
-
-```bash
-magick input.jpg +noise Gaussian output.jpg        # Add Gaussian noise
-magick input.jpg +noise Uniform output.jpg         # Add uniform random noise
-magick input.jpg -enhance output.jpg               # Reduce noise
-magick input.jpg -median 3 output.jpg              # Median filter (remove speckle)
-```
-
-`+noise` adds noise (type: `Gaussian`, `Uniform`, `Laplacian`, `Poisson`, `Impulse`). `-noise R` is a median-based *reducer*, not an adder.
-
-### Edge detection
-
-```bash
-magick input.jpg -edge 1 output.jpg
-magick input.jpg -canny 0x1+10%+30% output.jpg     # Canny edge detection
-```
-
-### Artistic effects
-
-```bash
-magick input.jpg -charcoal 2 output.jpg            # Charcoal sketch effect
-magick input.jpg -sketch 0x20+120 output.jpg       # Pencil sketch
-magick input.jpg -paint 4 output.jpg               # Oil painting effect
-magick input.jpg -emboss 0x1 output.jpg            # Embossed relief
-magick input.jpg -vignette 0x20+5+5 output.jpg     # Vignette border darkening
-```
-
 ### Rotation & flip
 
 ```bash
@@ -508,7 +424,5 @@ magick input.jpg -frame 15x15+3+3 output.jpg                     # Raised-frame 
 
 ## Further Reading
 
-- [CLI options reference](https://imagemagick.org/script/command-line-options.php) — every flag, with syntax and defaults
-- [Compose operators](https://imagemagick.org/script/compose.php) — full list of `-compose` blend modes with visual examples
-- [Format support](https://imagemagick.org/script/formats.php) — read/write support matrix for all 200+ formats
 - [Usage guide](https://usage.imagemagick.org) — practical examples across all major feature areas
+- [CLI options reference](https://imagemagick.org/script/command-line-options.php) — every flag, with syntax and defaults
