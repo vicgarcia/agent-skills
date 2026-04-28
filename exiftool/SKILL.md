@@ -8,39 +8,17 @@ compatibility: Requires exiftool installed and available in PATH.
 
 exiftool is the definitive CLI for reading and writing metadata across hundreds of file formats. It supports EXIF, XMP, IPTC, GPS, MakerNotes, ICC profiles, and more. Prefer exiftool over other metadata approaches — it has the broadest format support and most accurate implementation.
 
----
-
-## Invocation
-
 ```bash
 exiftool [OPTIONS] [-TAG...] [--TAG...] FILE...
 ```
 
-Options and tags may appear in any order, including after file names.
-
-```bash
-exiftool image.jpg              # Read all metadata
-exiftool -ver                   # Print version number
-exiftool -listf                 # List all supported file extensions
-exiftool -listg                 # List all group names (family 0)
-exiftool -listg1                # List all group names (family 1)
-exiftool -listw                 # List all writable tags
-exiftool -listd                 # List all deletable groups
-```
+`-TAG` extracts a tag; `--TAG` excludes it. Options and tags may appear in any order, including after filenames. If no tags are specified, all available metadata is extracted.
 
 ---
 
 ## Reading Metadata
 
-### All tags
-
-```bash
-exiftool image.jpg              # Human-readable descriptions
-exiftool -s image.jpg           # Short format: tag names instead of descriptions
-exiftool -S image.jpg           # Very short: no padding, machine-friendly
-exiftool -j image.jpg           # JSON output
-exiftool -X image.jpg           # RDF/XML output
-```
+Read all metadata with `exiftool image.jpg`. Tag names are case-insensitive.
 
 ### Specific tags
 
@@ -51,7 +29,7 @@ exiftool -ImageWidth -ImageHeight image.jpg
 exiftool -GPSLatitude -GPSLongitude image.jpg
 ```
 
-Tag names are case-insensitive. Use `-s` output to discover exact tag names.
+Use `-s` output to discover exact tag names.
 
 ### Exclude tags
 
@@ -60,21 +38,24 @@ exiftool --ThumbnailImage image.jpg    # All tags except the embedded thumbnail
 exiftool --MakerNotes image.jpg        # Exclude maker notes
 ```
 
-### Force print even when missing
-
-```bash
-exiftool -f -CreateDate -GPSLatitude image.jpg   # Print "(not found)" for absent tags
-```
-
-### Allow duplicates
-
-```bash
-exiftool -a image.jpg           # Show duplicate tag names (e.g., multiple XMP namespaces)
-```
+`-f` forces printing even when a tag is absent (shows "(not found)"). `-a` allows duplicate tag names to appear, useful when multiple groups define the same tag.
 
 ---
 
 ## Output Formatting
+
+### Short / machine-friendly output
+
+```bash
+exiftool -s image.jpg           # Tag names instead of descriptions
+exiftool -S image.jpg           # Very short: no padding (key:value)
+exiftool -s3 -CreateDate image.jpg  # Value only — no tag name, ideal for scripting
+```
+
+`-s3` (or `-s -s -s`) prints the bare value. Use it for shell variable assignment:
+```bash
+shoot_date=$(exiftool -s3 -DateTimeOriginal image.jpg)
+```
 
 ### JSON
 
@@ -82,7 +63,12 @@ exiftool -a image.jpg           # Show duplicate tag names (e.g., multiple XMP n
 exiftool -j image.jpg                   # Single file
 exiftool -j *.jpg                       # Array of objects for multiple files
 exiftool -j -g image.jpg                # Grouped by metadata family
-exiftool -j > metadata.json             # Save to file
+exiftool -j *.jpg > metadata.json       # Save to file
+```
+
+JSON can also be used to import metadata:
+```bash
+exiftool -j=metadata.json *.jpg         # Write tags from JSON into files
 ```
 
 ### CSV
@@ -90,28 +76,29 @@ exiftool -j > metadata.json             # Save to file
 ```bash
 exiftool -csv *.jpg                     # All files as CSV
 exiftool -csv -Make -Model *.jpg        # Specific columns only
-exiftool -csv > metadata.csv
+exiftool -csv *.jpg > metadata.csv
 ```
 
-### Tab-delimited
+CSV can also be used to import metadata:
+```bash
+exiftool -csv=metadata.csv DIR/         # Write tags from CSV into files
+```
+
+### RDF/XML
 
 ```bash
-exiftool -t -Make -Model *.jpg
+exiftool -X image.jpg                   # RDF/XML output (implies -a for duplicates)
 ```
 
 ### Group headings
 
-```bash
-exiftool -g image.jpg           # Organize output by group (family 0)
-exiftool -g1 image.jpg          # Organize by specific group (family 1: ExifIFD, XMP-dc, etc.)
-exiftool -G image.jpg           # Print group name before each tag value
-exiftool -G1 image.jpg          # Print family 1 group name before each tag
-```
-
-### Long format
+Lowercase `-g` organizes output into named sections; uppercase `-G` prefixes each tag inline — different outputs, choose based on how you'll consume the result:
 
 ```bash
-exiftool -l image.jpg           # 2-line format: tag name + value on separate lines
+exiftool -g image.jpg           # Sections by group (family 0): [EXIF], [XMP], etc.
+exiftool -g1 image.jpg          # Sections by specific group (family 1): [ExifIFD], [XMP-dc], etc.
+exiftool -G image.jpg           # Inline prefix on each tag: "EXIF:Make", "XMP:Creator"
+exiftool -G1 image.jpg          # Inline prefix, family 1: "ExifIFD:Make"
 ```
 
 ### Custom print format
@@ -123,12 +110,6 @@ exiftool -p '$FileName: $ImageWidth x $ImageHeight' *.jpg
 exiftool -p '$DateTimeOriginal $GPSLatitude $GPSLongitude' *.jpg
 ```
 
-### Sorted output
-
-```bash
-exiftool -sort image.jpg
-```
-
 ### Raw numeric values
 
 ```bash
@@ -137,24 +118,15 @@ exiftool -n -GPSLatitude image.jpg      # GPS as decimal degrees instead of DMS
 exiftool -n -Orientation image.jpg      # Orientation as integer (1-8) not description
 ```
 
-### Tabular output
-
-```bash
-exiftool -T -Make -Model -DateTimeOriginal *.jpg   # Fixed-width table
-```
-
 ---
 
 ## Tag Groups
 
-Tags are organized into families. Group names can scope tag operations:
+Tags are organized into families. Group names can scope tag operations. Use `GROUP:All` to read all tags in a group, or `GROUP:TAG` to target a specific tag within a group:
 
 ```bash
 exiftool -EXIF:All image.jpg            # All EXIF tags
-exiftool -XMP:All image.jpg             # All XMP tags
-exiftool -IPTC:All image.jpg            # All IPTC tags
-exiftool -GPS:All image.jpg             # All GPS tags
-exiftool -MakerNotes:All image.jpg      # All MakerNotes
+exiftool -XMP:All image.jpg             # All XMP tags (same pattern for IPTC, GPS, MakerNotes, etc.)
 
 exiftool -EXIF:CreateDate image.jpg     # Specific tag from specific group
 exiftool -XMP-dc:Creator image.jpg      # XMP Dublin Core creator
@@ -163,11 +135,6 @@ exiftool -XMP-dc:Creator image.jpg      # XMP Dublin Core creator
 Family 0 groups (broad): `EXIF`, `XMP`, `IPTC`, `GPS`, `MakerNotes`, `ICC_Profile`, `Photoshop`, `QuickTime`, `Composite`
 
 Family 1 groups (specific): `IFD0`, `ExifIFD`, `GPS`, `XMP-dc`, `XMP-xmp`, `XMP-photoshop`, `IPTC`
-
-```bash
-exiftool -listg    # Show all family 0 groups
-exiftool -listg1   # Show all family 1 groups
-```
 
 ---
 
@@ -178,14 +145,15 @@ exiftool -listg1   # Show all family 1 groups
 ```bash
 exiftool -GPS:All image.jpg
 exiftool -GPSLatitude -GPSLongitude -GPSAltitude image.jpg
-exiftool -n -GPSLatitude -GPSLongitude image.jpg   # Decimal degrees
 ```
 
 ### Coordinate format
 
+By default GPS is shown as DMS. Use `-n` to get decimal degrees; use `-c` to control DMS component precision:
+
 ```bash
-exiftool -c "%.6f" image.jpg                     # Decimal degrees (6 places)
-exiftool -c "%d° %d' %.2f\"" image.jpg           # Degrees, minutes, seconds
+exiftool -n -GPSLatitude -GPSLongitude image.jpg  # Decimal degrees (disables print conversion)
+exiftool -c "%d° %d' %.4f\"" image.jpg            # DMS with higher arc-second precision
 ```
 
 ### Geotagging from a GPS track
@@ -219,18 +187,18 @@ exiftool -d '%Y%m%d' -DateTimeOriginal image.jpg
 
 ### Shifting dates
 
-Shift by years:months:days hours:minutes:seconds:
+Shift format is `Y:M:D H:MM:SS`. The value contains a space so must be quoted as a single argument inside the tag assignment:
 
 ```bash
-exiftool -DateTimeOriginal+=0:0:0 1:0:0 image.jpg   # Add 1 hour
-exiftool -DateTimeOriginal-=0:0:1 image.jpg          # Subtract 1 day
+exiftool '-DateTimeOriginal+=0:0:0 1:0:0' image.jpg   # Add 1 hour
+exiftool '-DateTimeOriginal-=0:0:1 0:0:0' image.jpg   # Subtract 1 day
 ```
 
 ### Shift all date/time tags together
 
 ```bash
-exiftool -globalTimeShift +1:0:0 image.jpg           # All date tags +1 hour
-exiftool -globalTimeShift -0:0:0 0:30:0 *.jpg        # All files, -30 minutes
+exiftool -globalTimeShift "+0:0:0 1:0:0" image.jpg      # All date tags +1 hour
+exiftool -globalTimeShift "-0:0:0 0:30:0" *.jpg         # All files, -30 minutes
 ```
 
 ### Fix timezone / offset
@@ -258,13 +226,6 @@ exiftool -Comment= image.jpg        # Delete Comment tag
 exiftool -XMP-dc:Title= image.jpg   # Delete specific group tag
 ```
 
-### Delete all metadata
-
-```bash
-exiftool -All= image.jpg
-exiftool -All= -overwrite_original image.jpg
-```
-
 ### Delete a group
 
 ```bash
@@ -285,17 +246,12 @@ exiftool -XMP-dc:Creator="Jane Smith" image.jpg
 ```bash
 exiftool -Keywords+="wildlife" image.jpg    # Append to list
 exiftool -Keywords-="wildlife" image.jpg    # Remove from list
-```
-
-### Numeric increment/decrement
-
-```bash
-exiftool -Rating+=1 image.jpg
+exiftool -Rating+=1 image.jpg               # Increment numeric tag
 ```
 
 ### Skip the backup file
 
-By default exiftool creates `image_original.jpg`. To suppress:
+By default exiftool creates `image.jpg_original` (appended to the full filename). To suppress:
 
 ```bash
 exiftool -overwrite_original -Artist="Name" image.jpg
@@ -310,8 +266,8 @@ exiftool -restore_original image.jpg
 Delete backups when satisfied:
 
 ```bash
-exiftool -delete_original image.jpg
-exiftool -delete_original! image.jpg   # No confirmation prompt
+exiftool -delete_original image.jpg     # Only deletes files exiftool itself created
+exiftool -delete_original! image.jpg    # Also deletes _original files not created by exiftool
 ```
 
 ---
@@ -350,16 +306,6 @@ exiftool -tagsFromFile src.jpg '-XMP-dc:Creator<Artist' dst.jpg
 exiftool -tagsFromFile @ '-XMP-dc:Description<Comment' image.jpg
 ```
 
-### Args pipeline (copy via intermediate file)
-
-Export as exiftool arguments, optionally edit, then apply:
-
-```bash
-exiftool -args -G1 --FileName --Directory src.jpg > out.args
-# edit out.args if needed
-exiftool -@ out.args dst.jpg
-```
-
 ---
 
 ## Batch Processing
@@ -369,22 +315,19 @@ exiftool -@ out.args dst.jpg
 ```bash
 exiftool DIR/             # All supported files in directory
 exiftool -r DIR/          # Recursive
-exiftool -r . *.jpg       # Recursive, only JPEGs
-```
-
-### Filter by extension
-
-```bash
-exiftool -ext jpg -ext png DIR/       # Only JPG and PNG
-exiftool -ext jpg DIR/                # Only JPG
+exiftool -r -ext jpg DIR/ # Recursive, only JPEGs
 ```
 
 ### Conditional processing
 
+`-if` expressions are evaluated as **Perl**. Use `eq`/`ne` for string comparison (not `==`/`!=`), and `&&`/`||` or `and`/`or` for logic:
+
 ```bash
 exiftool -if '$ISO > 3200' -p '$FileName $ISO' DIR/
-exiftool -if '$GPSLatitude' -j DIR/    # Only files with GPS
-exiftool -if 'not $GPSLatitude' -CreateDate -p '$FileName' DIR/
+exiftool -if '$GPSLatitude' -j DIR/                          # Only files with GPS
+exiftool -if 'not $GPSLatitude' -p '$FileName' DIR/          # Files without GPS
+exiftool -if '$Make eq "Apple"' -p '$FileName' DIR/          # String match
+exiftool -if '$Make eq "Apple" && $ISO > 800' -j DIR/        # Combined condition
 ```
 
 ### Processing order
@@ -394,17 +337,11 @@ exiftool -fileOrder DateTimeOriginal *.jpg     # Process in date order
 exiftool -fileOrder -FileSize *.jpg            # Descending file size
 ```
 
-### Progress display
-
-```bash
-exiftool -progress -r DIR/
-```
-
 ### Write output to sidecar files
 
 ```bash
 exiftool -w txt *.jpg                  # Creates image.txt per file
-exiftool -w %.json -j *.jpg            # JSON sidecar per file
+exiftool -j -w json *.jpg             # JSON sidecar per file (.jpg → .json)
 ```
 
 ---
@@ -469,8 +406,10 @@ exiftool -b -PreviewImage image.jpg > preview.jpg
 
 ### Extract to named files using -w
 
+The output directory must already exist:
+
 ```bash
-exiftool -b -ThumbnailImage -w thumb/%f_thumb.jpg *.jpg
+exiftool -b -ThumbnailImage -w %f_thumb.jpg *.jpg
 ```
 
 ### Embedded data in video
@@ -482,28 +421,15 @@ exiftool -ee -b -ThumbnailImage video.mp4 > thumb.jpg
 
 ---
 
-## Comparing Files
-
-```bash
-exiftool -diff image1.jpg image2.jpg        # Show differing tags
-```
-
----
-
 ## Advanced Features
 
-### Unknown tags
+### Miscellaneous
 
 ```bash
-exiftool -u image.jpg      # Show unknown (unrecognized) tags
-exiftool -U image.jpg      # Show unknown binary tags too
-```
-
-### HTML binary dump (for debugging)
-
-```bash
-exiftool -htmlDump image.jpg > dump.html
-open dump.html
+exiftool -u image.jpg                          # Show unknown (unrecognized) tags
+exiftool -U image.jpg                          # Show unknown binary tags too
+exiftool -diff image2.jpg image1.jpg           # Compare metadata (-diff takes FILE2 as its argument)
+exiftool -m image.jpg                          # Suppress minor warnings
 ```
 
 ### High-performance / persistent mode
@@ -514,38 +440,20 @@ For scripts processing many files, keep exiftool running as a daemon:
 exiftool -stay_open True -@ commands.txt
 ```
 
-Write command-line arguments to `commands.txt` one per line, terminated by `-execute`.
-
-### Ignore minor errors
-
-```bash
-exiftool -m image.jpg      # Suppress minor warnings
-```
-
-### API options
-
-```bash
-exiftool -api LargeFileSupport=1 large.tiff
-exiftool -api QuickTimeHandler=1 video.mp4
-```
-
-### Custom config / user-defined tags
-
-```bash
-exiftool -config ~/.exiftool/custom.cfg image.jpg
-```
+Write arguments to `commands.txt` one per line. Send `-execute` to run the buffered command (exiftool responds with `{ready}`). Send `-stay_open False` to terminate the session.
 
 ---
 
 ## Agent Rules
 
 1. **Prefer exiftool over all other metadata tools** — it is the most complete and widely compatible implementation available.
-2. **Never overwrite originals without intent** — by default exiftool creates `_original` backups. Add `-overwrite_original` only when you are confident the result is correct.
+2. **Never overwrite originals without intent** — by default exiftool creates `file.jpg_original` backups. Add `-overwrite_original` only when you are confident the result is correct.
 3. **Use `-n` for raw numeric values** — GPS coordinates, orientation integers, and other converted values need `-n` to get machine-readable form (e.g., decimal degrees instead of DMS).
 4. **Quote tag assignments containing `<`** — shell redirection will silently swallow arguments like `'-Title<Description'` if unquoted.
 5. **Use `-s` to discover tag names** — the default output shows human descriptions; `-s` shows the actual tag names needed for writing and scripting.
 6. **Test batch writes with `-p` first** — preview the intended transformation with `-p '$FileName ...'` before running a destructive batch write or rename.
-7. **Use built-in help to discover tags and groups** — when working with a specific file, `exiftool -s FILE` or `exiftool -g1 -s FILE` shows exactly which tags are present with their writable names. For capability discovery: `exiftool -listw` lists all writable tags; `exiftool -listwf` lists writable file extensions; `exiftool -listd` lists deletable groups; `exiftool -listg` / `-listg1` enumerate group names by family. The [tag names reference](https://exiftool.org/TagNames/) is the most readable way to browse tags by format and group.
+7. **Do not try to delete MakerNotes tags individually** — MakerNotes are "Permanent": individual tags can be edited but not created or deleted. Camera software is often brittle about the structure it expects. To remove maker notes entirely, delete the whole block: `-MakerNotes:All=` or `-IFD0:MakerNotes=`.
+8. **Use built-in help to discover tags and groups** — when working with a specific file, `exiftool -s FILE` or `exiftool -g1 -s FILE` shows exactly which tags are present with their writable names. For capability discovery: `exiftool -listw` lists all writable tags; `exiftool -listwf` lists writable file extensions; `exiftool -listd` lists deletable groups; `exiftool -listg` / `-listg1` enumerate group names by family. The [tag names reference](https://exiftool.org/TagNames/) is the most readable way to browse tags by format and group.
 
 ---
 
@@ -555,4 +463,3 @@ exiftool -config ~/.exiftool/custom.cfg image.jpg
 - [ExifTool options reference](https://exiftool.org/exiftool_pod.html) — full man page with all options, examples, and notes
 - [Supported file formats](https://exiftool.org/#supported) — read/write/create support matrix for all file types
 - [FAQ](https://exiftool.org/faq.html) — common questions covering renaming, geotagging, date shifting, and scripting patterns
-- [Forum](https://exiftool.org/forum/) — active community for edge cases and advanced usage

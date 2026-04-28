@@ -8,10 +8,6 @@ compatibility: Requires ImageMagick 7+ with the `magick` command available in PA
 
 ImageMagick is a CLI tool for image manipulation. The `magick` command is the unified entry point for all operations — format conversion, resizing, color adjustments, effects, annotation, compositing, and batch processing across 200+ image formats.
 
----
-
-## Invocation
-
 ```bash
 magick [input] [options...] [output]
 ```
