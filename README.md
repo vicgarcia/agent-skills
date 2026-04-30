@@ -10,7 +10,7 @@ Schedule one-time deferred command execution using the Unix `at` command. Use fo
 
 ### [dates](https://github.com/vicgarcia/agent-skills/blob/main/dates/SKILL.md)
 
-Date and time operations via the `date` and `cal` system commands. Provides ground-truth current time and date arithmetic so agents don't rely on their unreliable internal sense of time.
+Date and time operations via the `date` system command. Provides ground-truth current time, date arithmetic, and full calendar navigation (month boundaries, weekday lookups, week ranges) so agents don't rely on their unreliable internal sense of time.
 
 ### [exiftool](https://github.com/vicgarcia/agent-skills/blob/main/exiftool/SKILL.md)
 
