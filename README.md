@@ -8,7 +8,7 @@ A collection of skills for coding agents. Compatible with [pi](https://pi.dev) a
 
 Schedule one-time deferred command execution using the Unix `at` command. Use for delayed operations, follow-up actions, and any task that should run once at a specific future time.
 
-### [dates](https://github.com/vicgarcia/agent-skills/blob/main/dates/SKILL.md)
+### [date](https://github.com/vicgarcia/agent-skills/blob/main/date/SKILL.md)
 
 Date and time operations via the `date` system command. Provides ground-truth current time, date arithmetic, and full calendar navigation (month boundaries, weekday lookups, week ranges) so agents don't rely on their unreliable internal sense of time.
 

@@ -1,5 +1,5 @@
 ---
-name: dates
+name: date
 description: Date/time operations via system commands. LLMs have unreliable internal date knowledge—always use `date` for current time and calendar navigation.
 compatibility: POSIX (Unix/macOS/Linux)
 ---
