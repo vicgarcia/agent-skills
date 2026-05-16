@@ -1,12 +1,12 @@
 ---
-name: imagemagick
+name: magick
 description: Manipulate, convert, and process images from the command line using the magick CLI. Resize, crop, annotate, filter, composite, and convert between 200+ formats.
 compatibility: Requires ImageMagick 7+ with the `magick` command available in PATH.
 ---
 
-# ImageMagick
+# magick
 
-ImageMagick is a CLI tool for image manipulation. The `magick` command is the unified entry point for all operations — format conversion, resizing, color adjustments, effects, annotation, compositing, and batch processing across 200+ image formats.
+magick is a CLI tool for image manipulation. The `magick` command is the unified entry point for all operations — format conversion, resizing, color adjustments, effects, annotation, compositing, and batch processing across 200+ image formats.
 
 ```bash
 magick [input] [options...] [output]
