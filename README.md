@@ -8,6 +8,10 @@ A collection of skills for coding agents. Compatible with [pi](https://pi.dev) a
 
 Schedule one-time deferred command execution using the Unix `at` command. Use for delayed operations, follow-up actions, and any task that should run once at a specific future time.
 
+### [charts](https://github.com/vicgarcia/agent-skills/blob/main/charts/SKILL.md)
+
+Generate publication-quality charts (bar, line, pie, scatter, radar, funnel, gauge, treemap, boxplot, heatmap, candlestick, sankey) as SVG or PNG files using [charts-cli](https://github.com/Michaelliv/charts-cli) and ECharts JSON configs. Use when the user asks to visualize data, create a chart, or render any statistical or business graphic. Requires Node.js 18+ and `npm install -g charts-cli`.
+
 ### [date](https://github.com/vicgarcia/agent-skills/blob/main/date/SKILL.md)
 
 Date and time operations via the `date` system command. Provides ground-truth current time, date arithmetic, and full calendar navigation (month boundaries, weekday lookups, week ranges) so agents don't rely on their unreliable internal sense of time.
