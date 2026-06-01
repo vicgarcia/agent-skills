@@ -170,6 +170,11 @@ Every edge must include `<mxGeometry relative="1" as="geometry" />` — never se
 </mxCell>
 ```
 
+**Always add a label background** on any labeled edge where the line may cross other lines — prevents the label from being unreadable against the line stroke:
+```
+edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;labelBackgroundColor=#ffffff;labelBorderColor=none;
+```
+
 **Straight line (no routing) — use for UML class diagrams**
 ```xml
 <mxCell id="e3" value="" style="html=1;" edge="1" source="class1" target="class2" parent="1">
@@ -229,6 +234,47 @@ Use one consistent edge style throughout a diagram.
 
 Use `endFill=0` for hollow variants (e.g. UML aggregation: `endArrow=diamond;endFill=0`).
 
+### Waypoints (explicit edge routing)
+
+When the auto-router produces crossings or bad paths, force an edge through specific canvas coordinates using `<Array as="points">` inside `<mxGeometry>`. Each `<mxPoint>` is an absolute canvas coordinate the edge must pass through.
+
+```xml
+<mxCell id="e1" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="svc-a" target="svc-b" parent="1">
+  <mxGeometry relative="1" as="geometry">
+    <Array as="points">
+      <mxPoint x="120" y="400" />
+      <mxPoint x="120" y="520" />
+    </Array>
+  </mxGeometry>
+</mxCell>
+```
+
+Use waypoints to route an edge **left or right of a column** rather than through it — the most common fix for same-column congestion. Two points at the same x forms a vertical detour; two at the same y forms a horizontal detour.
+
+### Exit / entry constraints
+
+Control which face of a node an edge connects to using `exitX`, `exitY`, `entryX`, `entryY` style params. Values are 0–1 representing normalized position on the bounding box edge.
+
+| Style params | Meaning |
+|---|---|
+| `exitX=0.5;exitY=1;exitDx=0;exitDy=0;` | Exit from bottom center |
+| `exitX=1;exitY=0.5;exitDx=0;exitDy=0;` | Exit from right middle |
+| `exitX=0;exitY=0.5;exitDx=0;exitDy=0;` | Exit from left middle |
+| `exitX=0.5;exitY=0;exitDx=0;exitDy=0;` | Exit from top center |
+| `entryX=0.5;entryY=0;entryDx=0;entryDy=0;` | Enter from top center |
+| `entryX=0;entryY=0.5;entryDx=0;entryDy=0;` | Enter from left middle |
+
+Always pair `exitX/Y` with `exitDx=0;exitDy=0` and `entryX/Y` with `entryDx=0;entryDy=0` — the Dx/Dy offsets are required, even at zero.
+
+Example — force a same-column edge to exit left and enter left, routing it around the column:
+```xml
+<mxCell id="e1" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="svc-a" target="svc-b" parent="1">
+  <mxGeometry relative="1" as="geometry" />
+</mxCell>
+```
+
+Combine exit/entry constraints with waypoints for full control over a problem edge.
+
 ---
 
 ## Layout Guidelines
@@ -253,6 +299,19 @@ Pick one and commit. Do not mix orientations within a diagram.
 
 - 40px between sibling nodes
 - 20px clearance from container walls to child nodes
+
+### Routing corridors
+
+For diagrams with many edges — especially architecture and service diagrams — reserve intentional empty columns or rows as routing space. A corridor is simply a column or row with no nodes; the auto-router uses that space to route edges without crossing nodes.
+
+- **Top-down layout**: leave a gap row between service groups where horizontal cross-group edges will travel
+- **Left-right layout**: leave a gap column between stages where vertical routing will occur
+- No special XML is needed — just skip that col/row index when placing nodes
+
+**Same-column and same-row edge conflicts**: when two nodes are stacked in the same column (top-down flow) and need to connect to each other, the auto-router routes the edge through adjacent cells and frequently produces crossings. Resolution in order of preference:
+1. Place the target in an adjacent column so the edge travels through empty routing space
+2. Use explicit waypoints to route the edge left or right around the column
+3. Use exit/entry constraints to force the edge out a specific side, then use waypoints to clear the column
 
 ---
 
@@ -289,6 +348,30 @@ Stack lanes vertically (same x=0, increasing y). Cross-lane edges must have `par
   <mxGeometry x="20" y="20" width="120" height="60" as="geometry" />
 </mxCell>
 ```
+
+### Zone / region background (non-container)
+
+Use a plain rectangle placed **before** foreground nodes in the XML to delineate areas visually — without the parent-child coordinate complexity of swimlanes. Since XML order = z-order, the zone renders behind anything declared after it.
+
+```xml
+<!-- Zone background — declared first, renders under all sibling nodes -->
+<mxCell id="zone-api" value="API Layer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0f8ff;strokeColor=#6c8ebf;strokeWidth=1;fontSize=11;fontStyle=1;verticalAlign=top;opacity=60;" vertex="1" parent="1">
+  <mxGeometry x="20" y="20" width="520" height="180" as="geometry" />
+</mxCell>
+<!-- Foreground nodes — same parent="1", absolute coordinates that fall inside the zone -->
+<mxCell id="svc-a" value="Service A" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+  <mxGeometry x="60" y="80" width="140" height="60" as="geometry" />
+</mxCell>
+```
+
+Zone nodes have `parent="1"` and use absolute canvas coordinates — they are **siblings**, not parents, of the nodes inside them. This keeps edge routing simple: all edges also have `parent="1"` and no container scoping applies.
+
+Recommended zone style:
+```
+rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;opacity=60;verticalAlign=top;fontSize=11;fontStyle=1;
+```
+
+Use zones instead of swimlanes when: the grouping is purely visual, edges cross zone boundaries freely, or nested container coordinates would be inconvenient.
 
 ### Nested architecture containers
 
@@ -378,6 +461,43 @@ rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;
 **Example — blueprint decision:**
 ```
 rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;
+```
+
+---
+
+## Visual Emphasis
+
+### Stroke width
+
+`strokeWidth` controls border thickness. Default is `2` for most shapes. Use it to draw the eye to critical nodes.
+
+```
+strokeWidth=3;   <!-- subtle emphasis -->
+strokeWidth=4;   <!-- strong emphasis — use sparingly, one or two nodes max -->
+```
+
+Example — API gateway as the focal point of an architecture diagram:
+```
+rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=4;
+```
+
+### Font style bitmask
+
+`fontStyle` is a bitmask — add values to combine effects:
+
+| Value | Effect |
+|-------|--------|
+| `0` | Normal (default) |
+| `1` | Bold |
+| `2` | Italic |
+| `4` | Underline |
+| `3` | Bold + Italic |
+| `5` | Bold + Underline |
+| `6` | Italic + Underline |
+
+```
+fontStyle=1;   <!-- bold — use for section titles and key nodes -->
+fontStyle=2;   <!-- italic — use for annotations and notes -->
 ```
 
 ---
@@ -478,7 +598,9 @@ Before emitting XML:
 - Enumerate all nodes with their semantic role (start, process, decision, I/O, data, end)
 - Assign an ID to each (descriptive strings preferred)
 - Assign a `(col, row)` grid position to each node
-- List all edges with source ID → target ID and label (if any)
+- **Identify routing corridors**: for diagrams with 6+ nodes or cross-group edges, note which columns or rows will be left empty as routing space — especially when same-column/row nodes need to connect laterally
+- **Flag problematic edges**: any edge between nodes in the same column (top-down) or same row (left-right) will conflict with the auto-router; plan to use explicit waypoints or exit/entry constraints for these before writing
+- List all edges with source ID → target ID and label (if any); mark which edges need label backgrounds, waypoints, or constraints
 
 Then write XML directly from this plan — do not narrate coordinate calculations in prose.
 
@@ -491,6 +613,10 @@ Name files descriptively: `order-flow.drawio`, `system-architecture.drawio`, `us
 ### Confirm with the user
 
 After writing, briefly describe what was created or changed so the user can verify it matches their intent before opening it.
+
+### Dense diagrams: export-verify loop
+
+Routing problems — crossings, labels overlapping lines, edges clipping nodes — are only visible in the rendered output. For diagrams with 10+ nodes or many cross-column edges, suggest the user export to PNG after the first draft and check layout before adding remaining edges or labels. A single export pass early catches structural routing problems when they are cheap to fix — targeted waypoints and constraints on a half-populated diagram are far easier than cleanup after it is fully built.
 
 ---
 
@@ -616,3 +742,6 @@ Before writing the file, verify:
 - [ ] No XML comments in the output
 - [ ] Non-rectangular shapes have matching `perimeter=` in their style (diamond → `rhombusPerimeter`, ellipse → `ellipsePerimeter`, parallelogram → `parallelogramPerimeter`)
 - [ ] All vertices have `x`, `y`, `width`, `height` in their `mxGeometry`
+- [ ] Edges between same-column nodes (top-down) or same-row nodes (left-right) use explicit waypoints or exit/entry constraints — not left to the auto-router
+- [ ] Labeled edges that may cross other lines include `labelBackgroundColor=#ffffff;labelBorderColor=none;` in their style
+- [ ] Zone background cells appear **before** the nodes they cover in the XML (z-order = declaration order)
