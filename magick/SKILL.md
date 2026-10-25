@@ -274,6 +274,25 @@ magick compare -metric DSSIM a.png b.png null:               # structural dissim
 
 The metric is printed to **stderr** with no trailing newline (capture it with `2>&1`). Use the normalized value in parentheses for thresholds: 0 means identical. Extract it with `sed -E 's/.*\(([0-9.e-]+)\).*/\1/'`. The exit code is 0 if similar, 1 if they differ, 2 on error — so don't treat 1 as a failure. Images must have identical dimensions; resize or crop first. `SSIM` semantics have changed between IM 7 releases, so prefer `DSSIM` or `RMSE`.
 
+### Visual diff recipes
+
+Use these for screenshot regression checks, before/after comparisons, or confirming an edit changed only what it should.
+
+```bash
+magick compare -metric AE -fuzz 3% before.png after.png diff.png 2>&1; echo   # differing-pixel count; diff.png marks changes in red
+magick before.png after.png -compose difference -composite -auto-level heat.png   # intensity map of the changes
+magick before.png after.png diff.png +append side_by_side.png                     # before | after | diff in one image to view
+```
+
+Turn the metric into a pass/fail decision with the normalized value (0 = identical):
+
+```bash
+d=$(magick compare -metric RMSE a.png b.png null: 2>&1 | sed -E 's/.*\(([0-9.e-]+)\).*/\1/')
+awk -v d="$d" 'BEGIN{exit !(d < 0.02)}' && echo same || echo different
+```
+
+**Match dimensions first, because mismatches do not error.** Tested on IM 7.1.2: comparing a 400×300 image against a 200×150 one returned `44000 (0.3667)` with no warning, a confident-looking number that means nothing. Normalize before comparing with `-resize 'WxH!'` or `-extent`. To diff two video frames, extract the same timestamp from each video first.
+
 ---
 
 ## Batch Processing
@@ -293,6 +312,27 @@ magick mogrify -path thumbs -thumbnail 300x300 -format webp *.jpg
 ```bash
 mkdir -p out
 for f in *.png; do magick "$f" -resize 50% "out/${f%.*}.webp"; done
+```
+
+### Web-optimize a folder of photos
+
+Resize, convert to WebP, and strip metadata (including GPS) in one pass. Order matters: `-auto-orient` must run **before** `-strip`, or phone photos end up sideways.
+
+```bash
+mkdir -p web
+for f in *.jpg *.jpeg *.png *.heic; do
+  [ -e "$f" ] || continue                       # skip patterns that matched nothing
+  magick "$f" -auto-orient -resize '2048x2048>' -colorspace sRGB -strip -quality 82 "web/${f%.*}.webp"
+done
+magick identify -format '%f %wx%h %b\n' web/*   # verify sizes and bytes
+```
+
+Tested: a 3000×2000 JPEG with an EXIF rotation tag and GPS came out upright (1365×2048) with the GPS removed. `.heic` input needs a libheif delegate; the `[ -e ]` guard skips it quietly if there are no HEIC files, but a build without HEIC support fails on real ones (check `magick -list format | grep -i heic`).
+
+`-strip` also removes copyright and artist tags. To put ownership back (and nothing else) after stripping, use [exiftool](https://exiftool.org) if it's installed:
+
+```bash
+exiftool -overwrite_original -Copyright="© 2026 Name" -Artist="Name" web/*.webp
 ```
 
 ---

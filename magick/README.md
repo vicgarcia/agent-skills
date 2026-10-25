@@ -13,7 +13,8 @@ The skill itself is [`SKILL.md`](SKILL.md). All content lives in that one file; 
 - **Color & effects** — grayscale, levels, gamma, transparency, blur/sharpen, deskew.
 - **Compositing & drawing** — watermarks, overlays, append strips, text/captions, shapes, gradients, canvases.
 - **Montage** — labeled contact sheets and grids.
-- **Comparison** — AE/RMSE/DSSIM metrics for regression and before/after checks.
+- **Comparison & visual diff** — AE/RMSE/DSSIM metrics, heat maps, side-by-side strips, a pass/fail threshold idiom, and the warning that mismatched dimensions don't error.
+- **Web-optimizing photos** — a batch loop that resizes, converts to WebP, and strips GPS while keeping photos upright.
 - **Redaction** — pixelate and solid-box privacy edits.
 - **Batch** — `mogrify -path` and shell loops, plus Windows/Git Bash notes (`magick`, never `convert`).
 
