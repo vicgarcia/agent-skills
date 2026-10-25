@@ -1,424 +1,327 @@
 ---
 name: magick
-description: Manipulate, convert, and process images from the command line using the magick CLI. Resize, crop, annotate, filter, composite, and convert between 200+ formats.
-compatibility: Requires ImageMagick 7+ with the `magick` command available in PATH.
+description: Manipulate, convert, and process images from the command line using the ImageMagick 7 `magick` CLI. Covers format conversion across 200+ formats, resizing, cropping, padding, color and effects, annotation, compositing, drawing, montage/contact sheets, image comparison, redaction, and batch processing.
+compatibility: Requires ImageMagick 7+ with the `magick` command available in PATH. On Windows, always use `magick`, never `convert`.
 ---
 
-# magick
+# magick (ImageMagick)
 
-magick is a CLI tool for image manipulation. The `magick` command is the unified entry point for all operations — format conversion, resizing, color adjustments, effects, annotation, compositing, and batch processing across 200+ image formats.
-
-```bash
-magick [input] [options...] [output]
-```
-
-Options are applied in left-to-right order. The output format is determined by the output file extension.
-
-**Option ordering matters.** Flags must appear before the output filename — anything after the output path is silently ignored:
+ImageMagick 7's `magick` command is the single entry point for still-image work: conversion, resizing, cropping, color, effects, annotation, compositing, comparison, and batch processing across 200+ formats.
 
 ```bash
-# Wrong — -strip has no effect here
-magick input.jpg output.jpg -strip
-
-# Correct
-magick input.jpg -strip output.jpg
+magick [input-options] INPUT [processing-options] OUTPUT
 ```
 
-Processing options also apply to the image state at that point in the pipeline, so order between options matters too:
-```bash
-magick input.jpg -resize 800x -sharpen 0x1 output.jpg   # Sharpen after resize (correct for most cases)
-magick input.jpg -sharpen 0x1 -resize 800x output.jpg   # Sharpen before resize (different result)
-```
+The output format comes from the output extension (`out.webp`), or force it with a prefix (`png:out.dat`). Use `-` for stdin/stdout (`png:-`).
 
-Useful inspection and listing commands:
+**Always use `magick`, never `convert`.** `convert` is the deprecated IM6 name, and on Windows it is a system disk utility (it converts FAT to NTFS). Other tools are subcommands: `magick identify`, `magick montage`, `magick compare`, `magick mogrify`, `magick composite`.
+
+### Option order matters
+
+Options are applied left to right, to the images loaded so far. Anything after the output filename is ignored.
 
 ```bash
-magick --version           # Check version and build info
-magick -list format        # All supported formats
-magick -list font          # Available fonts
-magick identify image.jpg  # Inspect image metadata (inline subcommand)
+magick input.jpg output.jpg -strip            # wrong: -strip ignored
+magick input.jpg -strip output.jpg            # right
+magick input.jpg -resize 800x -sharpen 0x1 output.jpg   # sharpen after resize (usually what you want)
 ```
 
-`identify` is an inline subcommand, not a separate binary:
+**Settings** (`-density`, `-background`, `-fill`, `-font`, `-gravity`, `-quality`) persist until changed. **Operators** (`-resize`, `-crop`, `-annotate`) act immediately. Input settings such as `-density` and `-size` must come *before* the input they affect.
+
+### Parentheses
+
+Parentheses process a subset of images independently. Escape them in bash:
 
 ```bash
-magick identify -verbose image.jpg   # Full metadata dump
-magick identify -format "%wx%h\n" *.jpg  # Print dimensions for multiple files
+magick photo.jpg \( logo.png -resize 200x \) -gravity SouthEast -geometry +20+20 -composite out.jpg
 ```
+
+---
+
+## Inspecting Images
+
+```bash
+magick identify image.jpg                                    # one line: format, size, depth, file size
+magick identify -format '%f %m %wx%h %[colorspace] %z-bit alpha:%A q:%Q %b\n' *.jpg
+magick identify -format '%[EXIF:Orientation] %[EXIF:DateTimeOriginal]\n' photo.jpg
+magick identify -verbose image.jpg | head -60                # full dump (long, so truncate it)
+magick identify -format '%n\n' anim.gif                      # number of frames/pages
+```
+
+| Token | Meaning | Token | Meaning |
+|-------|---------|-------|---------|
+| `%f` | filename | `%m` | format (JPEG, PNG) |
+| `%w` `%h` | width, height | `%b` | file size |
+| `%z` | bit depth | `%A` | alpha channel (True/False/Blend) |
+| `%Q` | JPEG quality estimate | `%x` `%y` | resolution (DPI) |
+| `%[colorspace]` | sRGB, Gray, CMYK | `%k` | unique colors (slow) |
+| `%n` | frame count | `%[EXIF:tag]` | an EXIF value |
+
+Mean brightness (0 = black, 1 = white): `magick image.png -colorspace Gray -format '%[fx:mean]\n' info:`. For metadata beyond basics, use exiftool.
+
+Capability lists: `magick -list format` (check HEIC/AVIF/JXL support here), `magick -list font`, `magick -list compose`, `magick -list gravity`, `magick -list filter`.
 
 ---
 
 ## Format Conversion
 
-The output format is inferred from the extension. No explicit flag needed.
-
 ```bash
-magick input.jpg output.png
-magick input.png output.webp
-magick input.tiff output.jpg
-magick input.heic output.jpg
+magick input.png output.jpg                 # alpha flattened onto white (set -background to change)
+magick input.jpg output.webp
+magick input.heic output.jpg                # needs a libheif delegate; check magick -list format | grep -i heic
+magick input.png -background white -alpha remove -alpha off output.jpg   # explicit flatten
 ```
 
-### Multiple frames / layers
+### Multi-frame formats (GIF, TIFF, PDF, ICO)
 
-Some formats (GIF, TIFF, PDF) can contain multiple frames. Use bracket notation to select:
-
-```bash
-magick input.gif[0] first-frame.png     # First frame only
-magick input.pdf[0] cover.png           # First page of PDF
-magick input.pdf[0-2] page.png          # Pages 0, 1, 2 → page-0.png, page-1.png, page-2.png
-```
-
-### Images to PDF
+Index into frames with `[N]`, `[N-M]`, or `[N,M]`. Quote the filename so the shell leaves the brackets alone.
 
 ```bash
-magick image1.jpg image2.jpg image3.jpg output.pdf
-magick *.jpg combined.pdf
+magick 'anim.gif[0]' first-frame.png
+magick anim.gif -coalesce frames/frame_%03d.png    # all frames, fully composed
+magick 'scan.tiff[2]' page3.png
 ```
 
-### PDF page to image
+### PDF and SVG (vector → raster)
+
+Set `-density` (DPI) **before** the input. Afterward is too late: the image was already rasterized at 72 DPI.
 
 ```bash
-magick -density 150 input.pdf[0] -quality 90 page.png
+magick -density 200 'document.pdf[0]' -quality 90 page1.jpg
+magick -density 300 document.pdf -background white -alpha remove pages/page_%03d.png
+magick -density 192 icon.svg -resize 512x512 icon.png
 ```
 
-`-density` sets the DPI before rasterizing — use 150–300 for readable output.
+PDF input requires Ghostscript. "no delegate for this image format" means it isn't installed.
 
-### SVG to image
-
-SVG is vector and must be rasterized. Set `-density` before the input to control output resolution:
+### Images → PDF, and icons
 
 ```bash
-magick -density 150 input.svg output.png
-magick -density 300 input.svg output.png    # Higher DPI for sharp/print output
+magick page1.jpg page2.jpg page3.jpg output.pdf
+magick *.jpg -resize 1700x2200 -gravity center -extent 1700x2200 -units PixelsPerInch -density 200 letter.pdf
+magick logo.png -define icon:auto-resize=256,64,48,32,16 favicon.ico
 ```
-
-`-density` must come before the input filename — if placed after, ImageMagick has already rasterized at the default 72 DPI and the result will be blurry or undersized.
 
 ---
 
-## Resize, Scale, Crop & Extend
-
-### Resize
+## Resize, Crop & Extend
 
 ```bash
-magick input.jpg -resize 800x600 output.jpg         # Fit within 800×600, preserve aspect ratio
-magick input.jpg -resize 800x output.jpg            # Fix width, height auto
-magick input.jpg -resize x600 output.jpg            # Fix height, width auto
-magick input.jpg -resize 50% output.jpg             # Scale by percentage
-magick input.jpg -resize '800x600!' output.jpg      # Force exact dimensions (distorts)
-magick input.jpg -resize '800x600>' output.jpg      # Only shrink, never enlarge
-magick input.jpg -resize '800x600<' output.jpg      # Only enlarge, never shrink
+magick in.jpg -resize 800x600 out.jpg        # fit within 800x600, keep aspect
+magick in.jpg -resize 800x out.jpg           # width 800
+magick in.jpg -resize x600 out.jpg           # height 600
+magick in.jpg -resize 50% out.jpg
+magick in.jpg -resize '800x600!' out.jpg     # exact, distorts
+magick in.jpg -resize '1600x1600>' out.jpg   # only shrink if larger (recommended default)
+magick in.jpg -resize '800x600^' -gravity center -extent 800x600 out.jpg   # fill and center-crop to exact size
+magick in.jpg -thumbnail 300x300 thumb.jpg   # fast resize and strip profiles; for previews
 ```
 
-`>`, `<`, and `!` are shell special characters — always quote geometry strings containing them.
-
-### Thumbnail (faster, strips metadata)
-
-```bash
-magick input.jpg -thumbnail 200x200 thumb.jpg
-```
-
-Prefer `-thumbnail` over `-resize` for previews — it's optimized for speed and auto-strips EXIF.
+Quote any geometry containing `>`, `<`, `!`, or `^`: these are shell metacharacters.
 
 ### Crop
 
 ```bash
-magick input.jpg -crop WxH+X+Y output.jpg        # W wide, H tall, starting at (X, Y)
-magick input.jpg -crop 400x300+100+50 output.jpg  # 400×300 region at offset (100, 50)
-magick input.jpg -crop 2x2@ output.jpg            # Split into 2×2 grid of tiles
+magick in.jpg -crop 400x300+100+50 +repage out.jpg               # WxH+X+Y
+magick in.jpg -gravity center -crop 1000x1000+0+0 +repage out.jpg   # center crop
+magick in.jpg -crop 50%x100% +repage half_%d.jpg                 # split into left/right halves
+magick in.jpg -crop 3x3@ +repage tile_%d.jpg                     # 3x3 grid of tiles
+magick in.png -trim +repage out.png                              # auto-crop uniform borders
+magick in.jpg -fuzz 10% -trim +repage out.jpg                    # trim near-uniform borders (scans, screenshots)
 ```
 
-After cropping, canvas size may retain original dimensions. Use `+repage` to reset:
+**Always add `+repage` after `-crop` or `-trim`.** Otherwise the virtual canvas keeps the old size and offset, which breaks later operations and PNG/GIF output.
+
+### Gravity, pad, border
+
+`-gravity` sets the anchor for crop, extent, composite, and annotate: `NorthWest North NorthEast West Center East SouthWest South SouthEast`.
 
 ```bash
-magick input.jpg -crop 400x300+100+50 +repage output.jpg
-```
-
-### Gravity-based operations
-
-`-gravity` positions the reference point for crop, extent, composite, and annotation. Valid values:
-
-| | | |
-|---|---|---|
-| `NorthWest` | `North` | `NorthEast` |
-| `West` | `Center` | `East` |
-| `SouthWest` | `South` | `SouthEast` |
-
-```bash
-magick input.jpg -gravity Center -crop 400x400+0+0 +repage output.jpg  # Center crop
-```
-
-### Extend / Add padding
-
-`-extent` sets the canvas size. Content is placed according to `-gravity`:
-
-```bash
-# Add white padding to reach 1000×1000
-magick input.jpg -background white -gravity center -extent 1000x1000 output.jpg
-
-# Add transparent padding (PNG only)
-magick input.png -background none -gravity center -extent 1200x800 +repage output.png
-```
-
----
-
-## Compositing, Combining & Annotation
-
-### Append images into a strip
-
-Combine multiple images side-by-side or stacked vertically:
-
-```bash
-magick image1.jpg image2.jpg image3.jpg +append output.jpg   # Horizontal strip
-magick image1.jpg image2.jpg image3.jpg -append output.jpg   # Vertical stack
-```
-
-Images are aligned to a common edge (top for horizontal, left for vertical). Mismatched dimensions leave empty space — normalize sizes first if needed.
-
-### Composite (layer one image over another)
-
-```bash
-magick base.jpg overlay.png -composite output.jpg
-```
-
-Control placement with `-gravity` and `-geometry` (offset):
-
-```bash
-# Center the overlay
-magick base.jpg overlay.png -gravity Center -composite output.jpg
-
-# Bottom-right corner, 10px inset
-magick base.jpg overlay.png -gravity SouthEast -geometry +10+10 -composite output.jpg
-```
-
-### Text annotation
-
-`-annotate` draws text at a position. `-gravity` sets the anchor, `-geometry` offsets from it:
-
-```bash
-magick input.jpg \
-  -font Helvetica -pointsize 36 \
-  -fill white \
-  -gravity SouthWest -annotate +20+20 "Caption text" \
-  output.jpg
-```
-
-With a semi-transparent fill for readability over photos:
-
-```bash
-magick input.jpg \
-  -font Helvetica -pointsize 32 \
-  -fill 'rgba(255,255,255,0.75)' \
-  -gravity South -annotate +0+20 "© Example" \
-  output.jpg
-```
-
-### Contact sheet / montage
-
-`montage` is a subcommand of `magick` that arranges multiple images into a labeled grid. It has its own option set — do not mix in standard `magick` processing options (like `-resize` or `-blur`) outside of parenthesized image groups:
-
-```bash
-magick montage [inputs] [montage-options] output
-```
-
-```bash
-# Basic grid, auto layout
-magick montage *.jpg output-sheet.jpg
-
-# Control tile layout and cell size
-magick montage *.jpg -tile 4x3 -geometry 200x200+5+5 output-sheet.jpg
-```
-
-`-tile COLSxROWS` — grid dimensions. `-geometry WxH+HGAP+VGAP` — cell size and spacing.
-
-Add labels under each image:
-
-```bash
-magick montage -label '%f' *.jpg -tile 4x -geometry 200x200+4+4 output-sheet.jpg
-```
-
-`-label` must come **before** the inputs — it is a per-image setting. Placed after, it applies to nothing. `%f` uses the filename. Other tokens: `%w` width, `%h` height, `%b` file size.
-
-Style the contact sheet:
-
-```bash
-magick montage -label '%f' *.jpg \
-  -tile 4x \
-  -geometry 200x200+6+6 \
-  -background '#1a1a1a' \
-  -fill white \
-  -font Helvetica \
-  -pointsize 11 \
-  output-sheet.jpg
-```
-
-### Create a solid color canvas
-
-Useful as a base for compositing or as a background:
-
-```bash
-magick -size 1920x1080 xc:white output.png
-magick -size 800x600 xc:'#1a1a2e' output.png
-magick -size 100x100 xc:'rgba(255,0,255,0.5)' output.png   # Semi-transparent
+magick in.jpg -background white -gravity center -extent 1200x1200 out.jpg   # pad to square canvas
+magick in.png -background none -gravity center -extent 1200x800 out.png     # transparent padding
+magick in.jpg -bordercolor black -border 10 out.jpg
+magick in.jpg -bordercolor white -border 20 -bordercolor '#ccc' -border 1 out.jpg   # mat + hairline
 ```
 
 ---
 
 ## Quality & Compression
 
-### JPEG quality
-
 ```bash
-magick input.jpg -quality 85 output.jpg    # 85 = good balance of quality/size
-magick input.jpg -quality 60 output.jpg    # Aggressive compression
+magick in.jpg -quality 82 out.jpg                          # 75–85 is the web sweet spot
+magick in.jpg -strip -interlace Plane -quality 82 out.jpg  # strip metadata; progressive JPEG
+magick in.jpg -define jpeg:extent=300KB out.jpg            # largest quality under 300 KB
+magick in.jpg -quality 80 out.webp                         # lossy WebP (smaller than JPEG at the same quality)
+magick in.png -define webp:lossless=true out.webp
+magick in.jpg -quality 50 out.avif                         # AVIF (if supported)
+magick in.png -define png:compression-level=9 out.png      # PNG is lossless; level only affects size and speed
+magick in.png -colors 256 png8:out.png                     # palette PNG, often 3–5x smaller for UI and screenshots
 ```
 
-Quality range: 1 (worst) – 100 (best). 75–85 is the practical sweet spot for web images.
-
-### WebP quality
-
-```bash
-magick input.jpg -quality 85 output.webp
-```
-
-WebP uses the same `-quality` flag as JPEG (1–100), but the encoding is different — WebP at 85 produces smaller files than JPEG at 85 with comparable visual quality. For lossless WebP:
-
-```bash
-magick input.png -define webp:lossless=true output.webp
-```
-
-### PNG compression
-
-```bash
-magick input.png -define png:compression-level=9 output.png   # Max compression (slower)
-magick input.png -define png:compression-level=6 output.png   # Default
-```
-
-PNG compression (0–9) affects file size and write speed but not visual quality.
-
-### Strip metadata
-
-```bash
-magick input.jpg -strip output.jpg         # Remove EXIF, ICC profiles, comments
-```
-
-Combine with quality for maximum size reduction:
-
-```bash
-magick input.jpg -strip -quality 82 output.jpg
-```
+`-strip` removes EXIF orientation, so run `-auto-orient` **before** `-strip`, or phone photos end up sideways. It also removes ICC profiles. For wide-gamut sources, convert first with `-colorspace sRGB` or `-profile sRGB.icc`.
 
 ---
 
 ## Color & Adjustments
 
-### Grayscale
-
 ```bash
-magick input.jpg -colorspace Gray output.jpg
+magick in.jpg -colorspace Gray out.jpg                     # grayscale
+magick in.tif -colorspace sRGB out.jpg                     # CMYK → sRGB for web
+magick in.jpg -brightness-contrast 10x20 out.jpg           # +10 brightness, +20 contrast
+magick in.jpg -modulate 100,130,100 out.jpg                # brightness,saturation,hue (100 = unchanged)
+magick in.jpg -level 10%,90% out.jpg                       # stretch levels
+magick in.jpg -gamma 1.3 out.jpg                           # lighten midtones (<1 darkens)
+magick in.jpg -auto-level out.jpg                          # auto stretch per channel
+magick in.jpg -normalize out.jpg                           # stretch histogram
+magick in.jpg -negate out.jpg                              # invert
+magick in.jpg -threshold 50% out.png                       # pure black/white
 ```
 
-### Colorspace conversion
+### Transparency
 
 ```bash
-magick input.tiff -colorspace sRGB output.jpg    # Convert CMYK/other to sRGB for web
-magick input.jpg -colorspace CMYK output.tiff    # Convert to CMYK for print workflows
+magick in.png -fuzz 8% -transparent white out.png                    # make a near-white background transparent
+magick in.png -alpha set -channel A -evaluate multiply 0.5 +channel out.png   # 50% opacity
+magick in.png -alpha extract mask.png                                # alpha as a grayscale mask
+magick in.jpg -fuzz 10% -fill none -draw 'color 0,0 floodfill' out.png   # flood-remove the background from a corner
 ```
 
-### Brightness, contrast, saturation
-
-```bash
-magick input.jpg -brightness-contrast 10x20 output.jpg     # +10 brightness, +20 contrast
-magick input.jpg -brightness-contrast -15x0 output.jpg     # Darken, no contrast change
-magick input.jpg -modulate 100,130,100 output.jpg           # Brightness,Saturation,Hue (100=no change)
-```
-
-`-modulate B,S,H` — values are percentages. 100 = unchanged. 150 saturation boosts color intensity.
-
-### Levels and gamma
-
-```bash
-magick input.jpg -level 10%,90% output.jpg         # Remap input range to expand contrast
-magick input.jpg -gamma 1.5 output.jpg             # Lighten midtones
-magick input.jpg -gamma 0.7 output.jpg             # Darken midtones
-```
-
-### Auto adjustments
-
-```bash
-magick input.jpg -auto-level output.jpg            # Auto-stretch levels per channel
-magick input.jpg -auto-gamma output.jpg            # Auto-correct gamma
-magick input.jpg -normalize output.jpg             # Stretch histogram to full range
-```
-
-### Opacity / transparency
-
-```bash
-# Make white background transparent (PNG output required)
-magick input.png -fuzz 5% -transparent white output.png
-
-# Set overall opacity
-magick input.png -alpha set -channel alpha -evaluate multiply 0.5 output.png
-```
-
-`-fuzz` sets color tolerance as a percentage — useful when the background isn't a perfectly uniform color.
+`-fuzz` is the color tolerance; it must come before the operator it affects.
 
 ---
 
 ## Filters & Effects
 
-### Blur
-
 ```bash
-magick input.jpg -blur 0x3 output.jpg              # Gaussian blur, sigma=3
-magick input.jpg -gaussian-blur 0x2 output.jpg     # Explicit Gaussian
-magick input.jpg -rotational-blur 10 output.jpg    # Rotational/spin blur
+magick in.jpg -blur 0x3 out.jpg                  # Gaussian (radius 0 = auto, sigma 3)
+magick in.jpg -sharpen 0x1 out.jpg
+magick in.jpg -unsharp 0x1+0.7+0.02 out.jpg      # photo sharpening after downscale
+magick in.jpg -rotate 90 out.jpg                 # clockwise; non-90° angles expand the canvas (-background sets fill)
+magick in.jpg -flip out.jpg                      # vertical mirror (-flop = horizontal)
+magick in.jpg -auto-orient out.jpg               # apply EXIF orientation to the pixels
+magick in.jpg -deskew 40% +repage out.jpg        # straighten scanned text
+magick in.jpg -median 3 out.jpg                  # despeckle
 ```
 
-`-blur RxS` — radius (0 = auto) and sigma. Larger sigma = more blur.
-
-### Sharpen
+### Pixelate / redact a region
 
 ```bash
-magick input.jpg -sharpen 0x1.5 output.jpg         # Sharpen, sigma=1.5
-magick input.jpg -unsharp 0x1+0.5+0 output.jpg     # Unsharp mask (common for photos)
+# Pixelate a 300x100 region at +50+400
+magick in.jpg \( +clone -crop 300x100+50+400 -scale 5% -scale 2000% \) -geometry +50+400 -composite out.jpg
+# Solid redaction box
+magick in.jpg -fill black -draw 'rectangle 50,400 350,500' out.jpg
 ```
 
-### Rotation & flip
+For true privacy, prefer solid boxes. Heavy blur and pixelation can sometimes be reversed.
+
+---
+
+## Compositing, Combining & Drawing
 
 ```bash
-magick input.jpg -rotate 90 output.jpg             # Rotate clockwise 90°
-magick input.jpg -rotate -45 output.jpg            # Rotate counter-clockwise 45°
-magick input.jpg -flip output.jpg                  # Vertical flip
-magick input.jpg -flop output.jpg                  # Horizontal flip
-magick input.jpg -auto-orient output.jpg           # Fix rotation from EXIF orientation
+magick base.jpg overlay.png -gravity SouthEast -geometry +20+20 -composite out.jpg     # watermark
+magick base.jpg \( logo.png -alpha set -channel A -evaluate multiply 0.6 +channel \) -gravity Center -composite out.jpg
+magick a.jpg b.jpg c.jpg +append strip.jpg                                             # side by side
+magick a.jpg b.jpg -append stacked.jpg                                                 # vertical
 ```
 
-### Border & frame
+`+append` aligns to the top and `-append` to the left. Set `-gravity center` before append to center instead.
+
+### Text
 
 ```bash
-magick input.jpg -border 10x10 -bordercolor black output.jpg     # 10px solid border
-magick input.jpg -frame 15x15+3+3 output.jpg                     # Raised-frame effect
+magick in.jpg -font Arial -pointsize 48 -fill white -stroke black -strokewidth 2 \
+  -gravity South -annotate +0+30 'Caption text' out.jpg
+
+# Auto-wrapped text block, sized to fit a box
+magick -size 800x200 -background '#0008' -fill white -font Arial caption:'Long text that wraps automatically' \
+  in.jpg +swap -gravity South -composite out.jpg
 ```
+
+`label:` makes single-line text sized to fit, `caption:` wraps within `-size`, and `-annotate` draws onto an existing image. Use `magick -list font` for valid font names, or pass a `.ttf` path.
+
+### Shapes and canvases
+
+```bash
+magick -size 1920x1080 xc:'#1a1a2e' bg.png                       # solid canvas
+magick -size 1200x630 gradient:'#4f46e5'-'#9333ea' bg.png         # gradient
+magick in.png -fill none -stroke red -strokewidth 4 -draw 'rectangle 100,100 400,300' annotated.png   # highlight a region
+magick in.png -fill none -stroke red -strokewidth 4 -draw 'circle 250,250 250,300' annotated.png
+```
+
+Drawing a box or arrow on a screenshot is a good way to point at something in an image you return to the user.
+
+---
+
+## Montage (contact sheets / grids)
+
+```bash
+magick montage *.jpg -tile 4x -geometry 300x300+6+6 sheet.jpg
+magick montage -label '%f' *.jpg -tile 5x -geometry 240x240+4+4 -pointsize 12 -background '#111' -fill white sheet.jpg
+```
+
+`-label` must come **before** the files it labels. `-geometry WxH+GAPX+GAPY` sets the cell size and spacing. `-tile 4x` fixes the columns, and the rows follow. Keep the total width ≤ ~1600 px if the sheet is meant to be viewed. `montage` has its own option set — don't mix standard processing options (like `-resize`) outside parenthesized image groups.
+
+---
+
+## Comparing Images
+
+```bash
+magick compare -metric AE -fuzz 2% a.png b.png diff.png      # differing pixels: "31124 (0.1297)" = count (fraction)
+magick compare -metric RMSE a.png b.png diff.png             # error: "19297.6 (0.2945)" = raw (normalized 0–1)
+magick compare -metric DSSIM a.png b.png null:               # structural dissimilarity (0 = identical)
+```
+
+The metric is printed to **stderr** with no trailing newline (capture it with `2>&1`). Use the normalized value in parentheses for thresholds: 0 means identical. Extract it with `sed -E 's/.*\(([0-9.e-]+)\).*/\1/'`. The exit code is 0 if similar, 1 if they differ, 2 on error — so don't treat 1 as a failure. Images must have identical dimensions; resize or crop first. `SSIM` semantics have changed between IM 7 releases, so prefer `DSSIM` or `RMSE`.
+
+---
+
+## Batch Processing
+
+### `mogrify` (in place by default — use `-path`)
+
+`magick mogrify` **overwrites its inputs** unless you give it `-path`. Always use `-path` with an existing directory:
+
+```bash
+mkdir -p web
+magick mogrify -path web -auto-orient -resize '1600x1600>' -strip -quality 82 -format jpg *.jpg *.png
+magick mogrify -path thumbs -thumbnail 300x300 -format webp *.jpg
+```
+
+### Shell loop (full control over names)
+
+```bash
+mkdir -p out
+for f in *.png; do magick "$f" -resize 50% "out/${f%.*}.webp"; done
+```
+
+---
+
+## Platform Notes (Windows / Git Bash)
+
+- **Always use `magick`, never `convert`** on Windows — `convert` is the system FAT→NTFS disk utility. Subcommands are `magick identify`, `magick montage`, `magick compare`, `magick mogrify`.
+- **Fonts:** `-font Arial` works on Windows; list available fonts with `magick -list font`. On Linux, pass a `.ttf` path if name lookup fails.
+- **Delegates:** HEIC/AVIF/JXL/PDF/RAW support depends on the build. Check `magick -list format` before promising them; PDF/EPS needs Ghostscript installed.
+- **Git Bash path conversion:** arguments starting with `/` are rewritten to Windows paths; `MSYS_NO_PATHCONV=1` disables it if a non-path argument is mangled.
 
 ---
 
 ## Agent Rules
 
-1. **Never overwrite the input file** — always write to a new output path unless explicitly instructed otherwise.
-2. **Check input exists** before running — `magick identify input.jpg` will error clearly if the file is missing.
-3. **Infer format from extension** — no `-format` flag needed; just name the output with the right extension.
-4. **Quote geometry strings** with `>`, `<`, or `!` — these are shell special characters (`>` and `<` redirect I/O, `!` triggers history expansion): `-resize '1200x>'`, `-resize '800x600!'`.
-5. **Use `+repage` after crop** — omitting it leaves ghost canvas dimensions that break downstream operations.
-6. **Prefer `-thumbnail` for previews** — faster than `-resize` and automatically strips metadata.
-7. **Use `-density` before vector input** — for PDF and SVG, set `-density` before the input filename, not after: `magick -density 150 in.pdf out.png`. Placing it after causes ImageMagick to rasterize at the default 72 DPI first.
-8. **Test with `-verbose`** — add `-verbose` to any command to see what ImageMagick is doing step by step.
-9. **Use built-in help for unfamiliar options** — `magick -help` lists all options; `magick -list` subtypes (e.g. `magick -list compose`, `magick -list filter`, `magick -list font`) enumerate valid values for a given parameter.
+1. **Never overwrite the input.** Use a new filename, and always pass `-path` to `mogrify`.
+2. **Use `magick`, never `convert`.**
+3. **Put settings before the input when they affect reading** (`-density`, `-size`), and put every operation before the output filename.
+4. **Quote geometry strings** containing `> < ! ^` and quote `'file[0]'` frame selectors.
+5. **Add `+repage` after `-crop` and `-trim`.**
+6. **Run `-auto-orient` before `-strip`** on photos.
+7. **Check for delegates** (`magick -list format`) before promising HEIC, AVIF, JXL, PDF, or RAW support.
+8. **Verify the result** with `magick identify -format` and view a downscaled copy for visual edits.
+9. **Use `magick -help` and `magick -list <type>`** rather than guessing at an option's syntax.
 
 ---
 
 ## Further Reading
 
-- [Usage guide](https://usage.imagemagick.org) — practical examples across all major feature areas
-- [CLI options reference](https://imagemagick.org/script/command-line-options.php) — every flag, with syntax and defaults
+- [Usage examples](https://usage.imagemagick.org) — practical examples across every feature area
+- [Command-line options](https://imagemagick.org/script/command-line-options.php) — every flag, with syntax and defaults
+- [Format and print escapes](https://imagemagick.org/script/escape.php) — the `-format` tokens
