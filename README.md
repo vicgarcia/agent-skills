@@ -16,7 +16,33 @@ Each skill is self-contained: it lives in its own directory, is useful on its ow
 | [exiftool](exiftool/README.md) | Read, write, copy, and strip metadata (EXIF/XMP/IPTC/GPS/QuickTime) in images, video, and documents; rename and sort files by capture date. Uses [exiftool](https://exiftool.org). |
 | [tesseract](tesseract/README.md) | OCR text from screenshots, scans, photos, and rasterized PDFs — page segmentation, searchable PDFs, word-level confidence, preprocessing. Uses [tesseract](https://github.com/tesseract-ocr/tesseract). |
 
-These five compose well: probe a file, transform it, OCR text out of it, and read or scrub its metadata — but each works entirely on its own.
+Each of these five works entirely on its own. They also compose well, and the tables below are a quick guide to which one to reach for.
+
+#### Which media skill do I need?
+
+| I want to… | Use |
+|------------|-----|
+| Know what's inside a video or audio file (codec, duration, streams, rotation) | [ffprobe](ffprobe/README.md) |
+| Convert, trim, compress, filter, or extract frames/audio/GIFs from video or audio | [ffmpeg](ffmpeg/README.md) |
+| Convert, resize, crop, annotate, composite, or compare still images | [magick](magick/README.md) |
+| Read, write, or strip metadata (EXIF, GPS, dates), or rename files by capture date | [exiftool](exiftool/README.md) |
+| Get text out of an image, scan, screenshot, or video frame | [tesseract](tesseract/README.md) |
+
+#### Common jobs and where they're documented
+
+Every recipe below lives in one skill's `SKILL.md`, with the commands inline. The last column lists other tools the recipe can use, so you know what to install.
+
+| Job | Documented in | Also uses |
+|-----|---------------|-----------|
+| Describe an unknown video (summary + contact sheet) | ffmpeg | exiftool (optional) |
+| Shrink a video to fit a size limit | ffmpeg | — |
+| Pull text out of a slide deck or screen recording | tesseract | ffmpeg, magick |
+| OCR a screenshot, photo of a page, or scanned PDF | tesseract | magick (preprocessing, PDFs) |
+| Web-optimize a folder of photos | magick | exiftool (restore copyright) |
+| Visual diff of two screenshots or images | magick | ffmpeg (to grab video frames) |
+| Privacy-scrub photos and videos before sharing | exiftool | magick, ffmpeg |
+| Sort photos and videos into folders by capture date | exiftool | — |
+| Keep metadata through a format conversion | exiftool | magick, ffmpeg |
 
 ### Diagrams & charts
 
