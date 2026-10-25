@@ -562,6 +562,93 @@ Stack horizontal swimlanes; place process nodes inside the appropriate lane; dra
 
 ---
 
+## Icons and Cloud Architecture Shapes
+
+For cloud and infrastructure diagrams, real service icons read far better than labeled boxes. Each provider uses a different style pattern. **Shape and icon names are not validated when you write the file.** A wrong name does not error: it silently renders as something plain, and you only see it in an export. Use only names from this section or ones you have confirmed by exporting.
+
+All patterns below were tested against draw.io desktop 31.7.0. Size icons about 60–78 px square, keep `aspect=fixed`, and put the label underneath with `verticalLabelPosition=bottom;verticalAlign=top;`.
+
+### AWS
+
+```xml
+<mxCell id="fn" value="Lambda" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=none;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda;" vertex="1" parent="1">
+  <mxGeometry x="80" y="80" width="60" height="60" as="geometry" />
+</mxCell>
+```
+
+Verified `resIcon` names: `ec2`, `s3`, `rds`, `lambda`, `api_gateway`, `dynamodb`, `cloudfront`, `sqs`, `sns`. Change only the `resIcon=mxgraph.aws4.<name>` value. `fillColor` is the tile color behind the glyph. AWS colors tiles by service category, and the tests used `#ED7100` for every icon, so choose the color deliberately.
+
+### Azure
+
+Azure icons are images, not shapes:
+
+```xml
+<mxCell id="app" value="App Service" style="image;aspect=fixed;html=1;align=center;verticalLabelPosition=bottom;verticalAlign=top;fontSize=11;image=img/lib/azure2/app_services/App_Services.svg;" vertex="1" parent="1">
+  <mxGeometry x="300" y="80" width="68" height="68" as="geometry" />
+</mxCell>
+```
+
+Verified paths under `img/lib/azure2/`: `app_services/App_Services.svg`, `compute/Function_Apps.svg`, `databases/SQL_Database.svg`, `storage/Storage_Accounts.svg`. Do not use a bare `shape=mxgraph.azure.function_apps`: in testing it rendered as a plain blue square, not the icon.
+
+### Google Cloud
+
+```xml
+<mxCell id="gce" value="Compute Engine" style="html=1;fontSize=11;verticalLabelPosition=bottom;verticalAlign=top;align=center;shape=mxgraph.gcp2.hexIcon;prIcon=compute_engine;fillColor=#4285F4;strokeColor=none;" vertex="1" parent="1">
+  <mxGeometry x="520" y="80" width="60" height="60" as="geometry" />
+</mxCell>
+```
+
+Verified `prIcon` names: `compute_engine`, `cloud_storage`, `bigquery`. A guessed image path such as `img/lib/gcp2/Compute_Engine.svg` does **not** work; use the `hexIcon` shape.
+
+### Generic shapes that always work
+
+`shape=cloud`, `shape=cylinder3` (database), `shape=umlActor` (person), and `shape=mxgraph.office.users.user` (user silhouette; add `fillColor=#2072B8;strokeColor=none;`).
+
+### How a bad name fails
+
+| Pattern | What a wrong name renders as |
+|---------|------------------------------|
+| AWS `resIcon=…` | A plain filled square (the tile color, no glyph) |
+| Azure `image=img/lib/…` | A broken-image placeholder |
+| GCP `prIcon=…` | Nothing at all, just the label |
+| Any `shape=mxgraph.…` | A plain white box with a border |
+
+If you are unsure of a provider's icon name, do not invent one. Use a generic shape (rounded rectangle, cylinder, cloud) with a clear text label, or ask the user. After placing icons, **export to PNG and look** for plain squares, empty spots, or placeholders before calling it done. The full icon sets are browsable in the draw.io app's shape search.
+
+---
+
+## Auto-Layout: Let draw.io Place the Nodes
+
+When exact placement doesn't matter (flowcharts, trees, org charts, simple architectures), skip the grid arithmetic. Write every vertex at `x="0" y="0"` with its real `width` and `height`, add the edges, and let draw.io's layout engine position everything and route the edges:
+
+```bash
+drawio -x -f xml -u --layout verticalFlow -o flow-laid-out.drawio flow.drawio
+```
+
+Write to a **new file**, then replace the original once you've checked it. `-f xml` is what saves the new positions into a `.drawio` file; without it, `--layout` only affects that one export (a PNG, SVG, or PDF). Pass `-u` to keep the XML uncompressed.
+
+Tested on a 4-node graph with all nodes stacked at (0,0): every preset moved the nodes apart and routed the edges, and re-exporting the laid-out file without `--layout` rendered identically.
+
+| Preset | Result on the test graph |
+|--------|--------------------------|
+| `verticalFlow` | Top-down layers; the two branches sit side by side below their parent |
+| `horizontalFlow` | Left-to-right layers with the same branching |
+| `verticalTree` / `horizontalTree` | Compact tree layouts, top-down or left-to-right |
+| `radialTree` | Nodes spread radially |
+| `organic` | Force-directed, irregular spacing |
+
+**Limits:** this was tested only on a flat graph. Containers, swimlanes, and zone backgrounds were not tested with `--layout`, so for those place nodes by hand using the grid rules above, or run the layout and inspect the export before trusting it. `--layout` can also take a custom JSON sequence (for example `[{"layout":"elkLayered","config":{"elk.direction":"RIGHT"}}]`; see `drawio --help`).
+
+### Safety net for generated files: `--normalize`
+
+`--normalize` repairs common mistakes in generated diagrams at export time, such as an edge written without its geometry. Tested: an edge with no `<mxGeometry>` child was invisible in a plain export and drew correctly with `--normalize`. `drawio --help` lists the other repairs (edges filed at the nearest common ancestor, containers grown to fit their children). Treat it as a backstop, not a reason to skip the rules above: it fixes the export, and the source file is unchanged unless you export as `xml`.
+
+```bash
+drawio -x -f png -b 20 --normalize -o diagram.png diagram.drawio
+```
+
+---
+
 ## Editing Existing Files
 
 When the user asks to modify an existing `.drawio` file:
@@ -618,6 +705,8 @@ After writing, briefly describe what was created or changed so the user can veri
 
 Routing problems — crossings, labels overlapping lines, edges clipping nodes — are only visible in the rendered output. For diagrams with 10+ nodes or many cross-column edges, suggest the user export to PNG after the first draft and check layout before adding remaining edges or labels. A single export pass early catches structural routing problems when they are cheap to fix — targeted waypoints and constraints on a half-populated diagram are far easier than cleanup after it is fully built.
 
+If draw.io desktop is installed, run the export yourself instead of asking the user (see "Exporting with the draw.io CLI"), then view the PNG. Look for edges that are missing entirely (a self-closed edge cell renders invisible), plain boxes or squares where an icon should be (a wrong shape name), broken-image placeholders, crossings, and labels sitting on lines. Fix and re-export before reporting the diagram as done.
+
 ---
 
 ## Exporting with the draw.io CLI
@@ -630,7 +719,14 @@ The draw.io desktop app includes a CLI for headless export of `.drawio` files to
 drawio --version
 ```
 
-If the command is not found, inform the user and provide install instructions for their platform (see below).
+If the command is not found, check the platform's default install location before concluding it is missing. **On Windows the installer does not put `drawio` on `PATH`**; the executable is `draw.io.exe`:
+
+```bash
+"/c/Program Files/draw.io/draw.io.exe" --version        # Git Bash
+& "C:\Program Files\draw.io\draw.io.exe" --version      # PowerShell
+```
+
+Tested with draw.io desktop 31.7.0. In the examples below, `drawio` stands for whichever invocation works on the machine, so substitute the full path on Windows. If nothing is installed, give the user install instructions for their platform (see below).
 
 ### Export commands
 
@@ -647,28 +743,43 @@ drawio --export --format svg --output diagram.svg diagram.drawio
 # PDF
 drawio --export --format pdf --output diagram.pdf diagram.drawio
 
-# Specific page from a multi-page file (0-indexed)
-drawio --export --format png --page-index 0 --output page1.png diagram.drawio
+# Specific page from a multi-page file (1-based: the first page is 1)
+drawio --export --format png --page-index 1 --output page1.png diagram.drawio
 
-# All pages as separate PNGs
-drawio --export --format png --all-pages --output diagram.png diagram.drawio
+# All pages as one PDF (--all-pages applies to PDF and HTML only)
+drawio --export --format pdf --all-pages --output diagram.pdf diagram.drawio
+
+# Every page as its own PNG: --all-pages does NOT do this for PNG, so loop over page numbers
+n=$(grep -o '<diagram ' diagram.drawio | wc -l)
+for p in $(seq 1 $n); do drawio -x -f png -p $p -o "diagram-$p.png" diagram.drawio; done
+
+# Embed the diagram source in the PNG so it can be reopened and edited in draw.io
+drawio --export --format png --embed-diagram --output diagram.png diagram.drawio
 ```
+
+**Page numbers start at 1.** `--page-index 0` fails with `Invalid page index: pages are numbered from 1 (0-based before v27.0.2)`, so older notes saying 0-based are out of date for current versions. With no page flag, an image export uses the first page, and `--all-pages` on a PNG still writes only page 1 (tested).
 
 ### Key flags
 
 | Flag | Description |
 |------|-------------|
 | `--export` | Enable export mode |
-| `--format` | Output format: `png`, `svg`, `pdf`, `jpg`, `xml` |
+| `--format` | Output format: `png`, `svg`, `pdf`, `jpg`, `xml`, `html` (ignored if `--output` has an extension) |
 | `--output` | Output file path |
 | `--scale` | Scale factor (default: 1). Use `2` for high-res |
-| `--page-index` | Export a specific page (0-indexed) |
-| `--all-pages` | Export all pages |
+| `--page-index` (`-p`) | Export a specific page (**1-based**) |
+| `--all-pages` (`-a`) | Export all pages (**PDF and HTML only**) |
 | `--width` | Fix output width in pixels (scales to fit) |
 | `--height` | Fix output height in pixels (scales to fit) |
 | `--border` | Border padding in pixels around the diagram |
-| `--transparent` | Transparent background (PNG only) |
+| `--transparent` | Transparent background (PNG and SVG) |
 | `--quality` | JPEG quality 1–100 (JPG only) |
+| `--embed-diagram` (`-e`) | Embed a copy of the diagram in PNG, SVG, or PDF so it can be reopened and edited |
+| `--size page` | Export the full page instead of cropping to the diagram content (default is `diagram`) |
+| `--theme` | `light`, `dark`, or `auto` (default) for the exported image |
+| `--layout <preset>` | Auto-layout before export; see Auto-Layout above |
+| `--normalize` | Repair generated diagrams at export time; see Auto-Layout above |
+| `--uncompressed` (`-u`) | Uncompressed XML output (XML and SVG formats) |
 
 ### Linux headless requirement
 
@@ -725,7 +836,11 @@ chmod +x drawio.AppImage
 
 **Windows**
 
-Download the installer from the [latest release](https://github.com/jgraph/drawio-desktop/releases/latest) — look for `draw.io-*-windows-installer.exe`. After install, `drawio` is available in the terminal.
+```powershell
+winget install JGraph.Draw
+```
+
+Or download the installer from the [latest release](https://github.com/jgraph/drawio-desktop/releases/latest) (look for `draw.io-*-windows-installer.exe`). The app installs to `C:\Program Files\draw.io\draw.io.exe`. **It is not added to `PATH`**, so call it by full path (see "Check if installed" above) or add that folder to `PATH` yourself.
 
 ---
 
@@ -745,3 +860,5 @@ Before writing the file, verify:
 - [ ] Edges between same-column nodes (top-down) or same-row nodes (left-right) use explicit waypoints or exit/entry constraints — not left to the auto-router
 - [ ] Labeled edges that may cross other lines include `labelBackgroundColor=#ffffff;labelBorderColor=none;` in their style
 - [ ] Zone background cells appear **before** the nodes they cover in the XML (z-order = declaration order)
+- [ ] Every icon name (`resIcon`, `prIcon`, `image=img/lib/…`, `shape=mxgraph.…`) comes from the Icons section or was confirmed by exporting: wrong names fail silently
+- [ ] If draw.io is available, the diagram was exported to PNG and viewed: no invisible edges, plain placeholder boxes, or broken-image icons
