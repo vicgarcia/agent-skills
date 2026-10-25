@@ -395,6 +395,35 @@ exiftool '-Directory<DateTimeOriginal' -d '%Y/%m' DIR/
 
 ```bash
 exiftool -p '$FileName -> ${DateTimeOriginal}' -d '%Y%m%d_%H%M%S.%%e' *.jpg
+exiftool '-TestName<DateTimeOriginal' -d '%Y%m%d_%H%M%S%%-c.%%e' DIR/   # shows the real new names, writes nothing
+```
+
+`TestName` is a virtual tag: exiftool computes and prints the new name exactly as `FileName` would, but renames nothing. Always run the `TestName` version first, inspect it, then rerun with `-FileName`.
+
+### Organize photos and videos together by capture date
+
+Files differ in which date tag they carry: photos have `DateTimeOriginal`, videos usually `CreateDate`, and anything else only the filesystem date. When several assignments target the same tag, **later ones override earlier ones if their source tag exists**, so list the fallbacks first and the best source last:
+
+```bash
+# 1. Dry run: preview the proposed paths
+exiftool -api QuickTimeUTC -r \
+  '-TestName<FileModifyDate' '-TestName<CreateDate' '-TestName<DateTimeOriginal' \
+  -d 'sorted/%Y/%m/%Y%m%d_%H%M%S%%-c.%%e' DIR/ | head -30
+
+# 2. Apply (this moves the files)
+exiftool -api QuickTimeUTC -r \
+  '-FileName<FileModifyDate' '-FileName<CreateDate' '-FileName<DateTimeOriginal' \
+  -d 'sorted/%Y/%m/%Y%m%d_%H%M%S%%-c.%%e' DIR/
+```
+
+- `%%-c` appends `-1`, `-2`, … when two files would get the same name, so nothing is overwritten.
+- The `-d` pattern can include folders (`sorted/%Y/%m/…`); exiftool creates them as needed.
+- `-api QuickTimeUTC` makes video dates local time (see Date & Time above).
+
+Filesystem dates are unreliable (copying a file resets them), so count how many files had **no** embedded capture date and report that number to the user instead of silently trusting those names:
+
+```bash
+exiftool -r -if 'not $DateTimeOriginal and not $CreateDate' -p '$Directory/$FileName' DIR/ | wc -l
 ```
 
 ---
@@ -415,6 +444,39 @@ PDF metadata removal is reversible (exiftool appends, never overwrites):
 exiftool -All= file.pdf
 exiftool -PDF-update:All= file.pdf   # Undo the update
 ```
+
+### Privacy scrub before sharing
+
+Strip, then **verify**. A scrub you haven't checked isn't done.
+
+```bash
+# Photos: the pixels must already be upright before stripping the orientation tag.
+# magick bakes the rotation in (any image tool that applies EXIF orientation works).
+magick in.jpg -auto-orient out.jpg
+exiftool -all= -overwrite_original out.jpg
+
+# Videos: drop container metadata without re-encoding, then remove what remains.
+ffmpeg -y -nostdin -i in.mov -map 0:v -map 0:a? -map_metadata -1 -map_chapters -1 -c copy -fflags +bitexact out.mp4
+exiftool -all= -overwrite_original out.mp4
+
+# Verify: ask only for tags that can identify someone. Tags that are absent print nothing,
+# so a clean file shows just its filename header.
+exiftool -G1 -a -s -GPS:all -Make -Model '-*Serial*' -Artist -Author -Creator -Title -Comment -Description -Copyright -Software -CreationDate -LocationInformation out.jpg out.mp4
+```
+
+A full `exiftool -G1 -a -s` dump of a clean video still lists ~90 structural QuickTime tags (track layout, timescales, handler names), so grepping that output buries the signal. Use the targeted check above. It reports each leak in an unscrubbed file (GPS, camera, title, location) and nothing for a scrubbed one.
+
+Neither tool alone is enough for video: some QuickTime atoms survive one tool and not the other, so run both and then verify.
+
+To keep a few specific tags (ownership, color profile) while removing everything else, **re-copy them from the file itself after wiping**:
+
+```bash
+exiftool -all= -tagsFromFile @ -Copyright -Artist -ICC_Profile out.jpg
+```
+
+Do not use `-all= --Copyright --Artist` for this. Tested: that form deletes `Copyright` and `Artist` along with everything else. (Excluding a whole *group*, as in `-All= --EXIF:All`, does work.)
+
+Metadata is only half the leak. Faces, license plates, addresses, and on-screen text in the pixels also identify people. Redact those with an image or video editor (a solid box is safer than blur) and re-check the result visually.
 
 ---
 

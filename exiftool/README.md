@@ -12,7 +12,8 @@ The skill itself is [`SKILL.md`](SKILL.md). All content lives in that one file; 
 - **GPS** — reading as DMS or decimal, writing coordinates, geotagging from GPX/NMEA tracks.
 - **Copying metadata** — between files, selective copy/exclude, tag redirection, restoring metadata after a magick/ffmpeg conversion.
 - **Renaming & organizing** — rename and sort files into folders by capture date (with dry runs).
-- **Privacy** — stripping all or selected metadata, with PDF and video caveats.
+- **Privacy scrub** — stripping photos and videos, a targeted verify command that reports only identifying tags, how to keep chosen tags (and the idiom that silently deletes them instead), and PDF/video caveats.
+- **Organize by capture date** — mixed photo/video sorting with collision-safe names, `TestName` dry runs, and counting files with no embedded date.
 - **Extraction** — embedded thumbnails, RAW previews, video timed metadata (GoPro/DJI), large-file support.
 - **Batch** — recursive, conditional (`-if`), persistent `-stay_open` mode, and Windows/Git Bash notes.
 
