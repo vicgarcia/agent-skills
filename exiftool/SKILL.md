@@ -18,7 +18,11 @@ exiftool [OPTIONS] [-TAG...] [--TAG...] FILE...
 
 ## Reading Metadata
 
-Read all metadata with `exiftool image.jpg`. Tag names are case-insensitive.
+Read all metadata with `exiftool image.jpg`. Tag names are case-insensitive. The most useful general-purpose read is `-G1 -a -s`: it shows the real tag names (needed for writing), the group each came from, and duplicate tags across groups.
+
+```bash
+exiftool -G1 -a -s image.jpg               # recommended: group prefix, duplicates shown, real tag names
+```
 
 ### Specific tags
 
@@ -204,7 +208,15 @@ exiftool -globalTimeShift "-0:0:0 0:30:0" *.jpg         # All files, -30 minutes
 ### Fix timezone / offset
 
 ```bash
-exiftool -OffsetTimeOriginal="-05:00" image.jpg
+exiftool -OffsetTimeOriginal="-05:00" -OffsetTime="-05:00" image.jpg
+```
+
+### Video dates (QuickTime / MP4)
+
+QuickTime `CreateDate` and `MediaCreateDate` are stored in **UTC** by spec. Add `-api QuickTimeUTC` so exiftool converts them to local time when reading and writing. iPhones also write a local-time `CreationDate` (Keys group) that is usually the best capture time for phone videos.
+
+```bash
+exiftool -api QuickTimeUTC -CreateDate -CreationDate -MediaCreateDate video.mp4
 ```
 
 ---
@@ -286,6 +298,17 @@ exiftool -tagsFromFile src.jpg -overwrite_original dst.jpg
 ```bash
 exiftool -tagsFromFile src.jpg -CreateDate -GPS:All dst.jpg
 ```
+
+### Restore metadata after a format conversion or transcode
+
+Converting with magick or ffmpeg drops or mangles metadata. Copy it back from the original:
+
+```bash
+exiftool -overwrite_original -tagsFromFile src.heic -all:all -unsafe dst.jpg          # after magick HEIC → JPG
+exiftool -overwrite_original -api QuickTimeUTC -tagsFromFile src.mov -all:all dst.mp4  # after an ffmpeg transcode
+```
+
+After `-auto-orient` (magick) or an ffmpeg transcode the pixels are already upright, so reset the copied orientation to avoid a double rotation: `exiftool -overwrite_original -Orientation#=1 dst.jpg`.
 
 ### Exclude tags from copy
 
@@ -416,7 +439,16 @@ exiftool -b -ThumbnailImage -w %f_thumb.jpg *.jpg
 
 ```bash
 exiftool -ee video.mp4                 # Extract from embedded tracks
+exiftool -ee -G3 video.mp4             # Timed metadata (GoPro, DJI, dashcam GPS tracks)
 exiftool -ee -b -ThumbnailImage video.mp4 > thumb.jpg
+exiftool -api LargeFileSupport=1 bigvideo.mp4   # Files over 4 GB
+```
+
+### Preview images inside RAW files
+
+```bash
+exiftool -b -PreviewImage photo.CR2 > preview.jpg    # full-size JPEG preview inside a RAW file
+exiftool -b -JpgFromRaw photo.NEF > full.jpg
 ```
 
 ---
@@ -441,6 +473,17 @@ exiftool -stay_open True -@ commands.txt
 ```
 
 Write arguments to `commands.txt` one per line. Send `-execute` to run the buffered command (exiftool responds with `{ready}`). Send `-stay_open False` to terminate the session.
+
+---
+
+## Platform Notes (Windows / Git Bash)
+
+exiftool runs normally as a native Windows executable under Git Bash. A couple of traps:
+
+- **Quoting `<` and `>`:** tag-redirect arguments like `'-FileName<DateTimeOriginal'` must be single-quoted, or the shell treats `<`/`>` as redirection and silently does the wrong thing. This matters under both bash and cmd/PowerShell.
+- **The backup file** is named `FILE_original` (the suffix is appended to the full name, extension included): `photo.jpg` → `photo.jpg_original`.
+- **Git Bash path conversion:** arguments starting with `/` are rewritten to Windows paths; prefix with `MSYS_NO_PATHCONV=1` if a non-path argument is mangled.
+- The Windows build is distributed as `exiftool(-k).exe` — rename it to `exiftool.exe` (or install via winget: `OliverBetz.ExifTool`) so it is callable as `exiftool`.
 
 ---
 
