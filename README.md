@@ -6,6 +6,12 @@ Each skill is self-contained: it lives in its own directory, is useful on its ow
 
 ## Skills
 
+### Development
+
+| Skill | What it does |
+|-------|--------------|
+| [coding](coding/README.md) | Personal coding standards for Python, JavaScript/TypeScript, and Go — layout, tooling, style, testing, containers, docs, and git (atomic one-line commits, never crediting an agent). Generates tailored per-project `AGENTS.md` files so projects carry the standards without the skill loaded. |
+
 ### Media
 
 | Skill | What it does |
