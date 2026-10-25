@@ -141,6 +141,23 @@ ffmpeg -y -nostdin -i input.mp4 -c:v libx264 -b:v 2M -preset medium -pass 2 -c:a
 
 Video bitrate for a size target: `video_kbps = target_MB * 8192 / duration_s - audio_kbps`. Two-pass leaves `ffmpeg2pass-0.log*` files in the working directory; delete them afterward.
 
+#### Worked recipe: shrink a video to fit a size limit (e.g. an upload cap)
+
+```bash
+in=in.mp4; target_mb=25; audio_kbps=96
+dur=$(ffprobe -v error -of csv=p=0 -show_entries format=duration "$in")
+vk=$(awk -v t="$target_mb" -v d="$dur" -v a="$audio_kbps" 'BEGIN{printf "%d", (t*8192/d - a)*0.97}')
+echo "video bitrate: ${vk}k"    # if under ~500k at 1080p, also downscale (scale=-2:720 or 480)
+
+ffmpeg -y -nostdin -i "$in" -vf "scale='min(1280,iw)':-2" -c:v libx264 -preset medium -b:v ${vk}k -pass 1 -an -f null -
+ffmpeg -y -nostdin -i "$in" -vf "scale='min(1280,iw)':-2" -c:v libx264 -preset medium -b:v ${vk}k -pass 2 \
+  -pix_fmt yuv420p -c:a aac -b:a ${audio_kbps}k -movflags +faststart out.mp4
+rm -f ffmpeg2pass-0.log*
+ls -l out.mp4
+```
+
+The `0.97` factor leaves headroom for container overhead. Tested on a 20 s 720p clip with a 1 MB target: 12.4 MB in, 1.02 MB out (97% of the limit, under it), duration unchanged. If the result still lands over the limit, lower `target_mb` slightly and rerun, or drop the resolution. For long inputs, run both passes in the background (see Long-Running Jobs).
+
 ---
 
 ## Audio Encoding
@@ -506,7 +523,7 @@ ffmpeg -y -nostdin -skip_frame nokey -i in.mp4 -fps_mode vfr -frame_pts true fra
 ffmpeg -y -nostdin -i in.mp4 -vf "select='gt(scene,0.3)',scale=1280:-2" -fps_mode vfr frames/scene_%03d.jpg  # scene changes
 ```
 
-Use scene threshold 0.3–0.4 for camera cuts, 0.1–0.2 for subtle changes like slides. List scene-change timestamps without writing images:
+Use scene threshold 0.3–0.4 for camera cuts and 0.1–0.2 for subtle changes. **Text-only slides on a plain background need far lower: ~0.02–0.03.** Tested on a 3-slide white-background deck: `0.15` caught 1 slide, `0.05` caught 2, `0.03` caught all 3, because text barely moves the pixel difference. Check the frame count after extracting, and expect to dedupe the extras a low threshold lets in. List scene-change timestamps without writing images:
 
 ```bash
 ffmpeg -nostdin -hide_banner -i in.mp4 -vf "select='gt(scene,0.3)',showinfo" -an -f null - 2>&1 | grep -o 'pts_time:[0-9.]*' | cut -d: -f2
@@ -556,6 +573,28 @@ ffmpeg -y -nostdin -loop 1 -i cover.jpg -i audio.mp3 -c:v libx264 -tune stillima
 ```
 
 The sequence must be contiguous. `-pattern_type glob` works on Linux/macOS but **not on Windows builds**; renumber the files instead.
+
+### Describe an unknown video without watching it
+
+Combine a technical summary, a timestamped contact sheet, and an audio-structure check. Each step stays cheap on any video length.
+
+```bash
+in=input.mp4; mkdir -p frames
+
+# 1. Technical summary: duration, size, and every stream on one line each (ffprobe ships with ffmpeg)
+ffprobe -v error -show_entries format=duration,size:stream=index,codec_type,codec_name,width,height,avg_frame_rate,channels:stream_tags=language,title -of compact "$in"
+
+# 2. Optional, if exiftool is installed: capture date, device, GPS
+exiftool -api QuickTimeUTC -s -CreationDate -CreateDate -Make -Model -GPSCoordinates -Duration "$in"
+
+# 3. Visual overview, ffmpeg only: 16 evenly spaced frames in one 4x4 sheet
+dur=$(ffprobe -v error -of csv=p=0 -show_entries format=duration "$in")
+ffmpeg -y -nostdin -hide_banner -loglevel error -i "$in" -vf "fps=16/$dur,scale=320:-2,tile=4x4:padding=4:color=black" -frames:v 1 sheet.jpg
+```
+
+View `sheet.jpg`, pick an interesting cell, then extract that timestamp at full resolution with a single-frame command. The `tile` route decodes the whole file, so for videos over ~10 minutes use the fast-seek loop from "N frames evenly spaced" above and label each cell with its timestamp via `magick montage` (tested: 16 frames in a 4-column sheet, 1632×1016, labels readable).
+
+For audio content, find speech versus silence with `silencedetect` (Audio Filters section) or render a waveform (Visualize audio). For a transcript, extract `-ar 16000 -ac 1` WAV for a speech-to-text tool.
 
 ---
 
