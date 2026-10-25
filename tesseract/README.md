@@ -11,6 +11,7 @@ The skill itself is [`SKILL.md`](SKILL.md). All content lives in that one file; 
 - **Quality scoring** — reading confidence from TSV to flag likely errors instead of presenting garbled text as fact.
 - **Preprocessing** — grayscale, upscaling, deskew, inversion for dark mode, thresholding, and cropping (via ImageMagick).
 - **PDFs & multi-page** — rasterizing PDFs at 300 DPI and combining pages into one searchable output.
+- **Video → text** — extract one frame per slide or screen change, drop near-duplicates, and OCR each one, with timestamps (uses ffmpeg and ImageMagick).
 - **Character restriction** — whitelists/blacklists and column-preserving layout hints.
 - **Languages** — multi-language OCR, scripts, and installing extra `traineddata` models.
 - **Limits & platform notes** — where OCR is unreliable, and Windows/Git Bash specifics.

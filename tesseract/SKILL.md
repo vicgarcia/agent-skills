@@ -1,7 +1,7 @@
 ---
 name: tesseract
 description: Extract text from images, screenshots, scans, photos of documents, and rasterized PDFs using the tesseract OCR CLI. Covers page segmentation modes, output formats (text, searchable PDF, TSV word boxes with confidence), image preprocessing, character restriction, and languages. Use whenever exact characters matter — serial numbers, code, long passages, form fields.
-compatibility: Requires tesseract 5+ installed and available in PATH. Image preprocessing examples use ImageMagick's `magick` (optional but recommended).
+compatibility: Requires tesseract 5+ installed and available in PATH. Image preprocessing examples use ImageMagick's `magick` (optional but recommended); the video-to-text recipe also uses ffmpeg (optional).
 ---
 
 # tesseract (OCR)
@@ -92,7 +92,7 @@ Tesseract works best on dark text over a light, uniform background, with capital
 | Small text (UI screenshots, low-res scans) | `-resize 200%` or `300%` (use `-filter Lanczos` for screenshots) |
 | Color / photo background | `-colorspace Gray` then `-normalize` or `-auto-level` |
 | Uneven lighting, shadows | `-lat 25x25-5%` (local adaptive threshold), or `-threshold 55%` on even scans |
-| Light text on dark background (dark-mode UIs, terminals) | `-negate` |
+| Light text on dark background (dark-mode UIs, terminals) | `-negate`, if the raw result is poor. Clean inverted text often OCRs fine as-is on tesseract 5 (tested), so try without it first and compare |
 | Skewed scan | `-deskew 40% +repage` |
 | Rotated 90°/180° | `-rotate 90`, or detect with `--psm 0` |
 | Speckle noise | `-median 2` or `-despeckle` |
@@ -133,6 +133,42 @@ tesseract scan.tiff out pdf
 ```
 
 When the input is a `.txt` file, tesseract treats it as a list of image paths, one per line, and produces combined output. Born-digital PDFs already have a text layer and don't need OCR. If a text extractor such as `pdftotext` is available, try it first.
+
+---
+
+## Slide Decks and Screen Recordings (video → text)
+
+To pull text out of a talk, demo, or screen recording, extract one frame per visual change, drop near-duplicates, then OCR what's left. This needs ffmpeg for frame extraction and ImageMagick for duplicate detection; the OCR step is plain tesseract.
+
+```bash
+mkdir -p slides
+
+# 1. One frame per visual change (plus frame 0). Low threshold on purpose; see note below.
+ffmpeg -y -nostdin -i talk.mp4 -vf "select='eq(n,0)+gt(scene,0.02)',scale=1920:-2" -fps_mode vfr slides/s_%03d.png
+
+# 2. Drop near-duplicates: compare each frame to the last one kept
+prev=""; for f in slides/s_*.png; do
+  if [ -n "$prev" ]; then
+    d=$(magick compare -metric RMSE "$prev" "$f" null: 2>&1 | sed -E 's/.*\(([0-9.e-]+)\).*/\1/')
+    awk -v d="$d" 'BEGIN{exit !(d < 0.02)}' && { rm "$f"; continue; }
+  fi; prev="$f"
+done
+
+# 3. OCR each remaining slide
+for f in slides/s_*.png; do
+  echo "=== $f"; magick "$f" -colorspace Gray -resize 150% png:- | tesseract stdin - --psm 3 2>/dev/null
+done > slides.txt
+```
+
+**Use a low scene threshold (0.02), not the usual 0.15–0.3.** Tested on a deck of text-only slides on white backgrounds: threshold `0.15` caught 1 of 3 slides, `0.05` caught 2, and `0.03` or lower caught all 3. Text on a plain background barely changes the pixel difference between slides, so the default thresholds used for camera cuts miss them. A low threshold can let in extra near-identical frames (cursor movement, compression noise), which is exactly what the duplicate-removal step in the middle cleans up. On that test deck the full pipeline returned the exact text of every slide.
+
+To align each slide's text with the timeline, list the change timestamps with the same threshold:
+
+```bash
+ffmpeg -nostdin -hide_banner -i talk.mp4 -vf "select='gt(scene,0.02)',showinfo" -an -f null - 2>&1 | grep -o 'pts_time:[0-9.]*' | cut -d: -f2
+```
+
+Frame 0 is always kept, so the list is one shorter than the slide count. Raise the duplicate threshold (`0.02` in the `awk` test) if near-identical slides survive; lower it if distinct slides with small edits get merged. Slides with images or colored backgrounds usually need a higher scene threshold than text-only ones, so check the frame count before OCRing.
 
 ---
 
