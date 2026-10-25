@@ -1,6 +1,6 @@
 ---
 name: ffmpeg
-description: Convert, transcode, trim, filter, and process video and audio files using the ffmpeg CLI. Handles format conversion, encoding, scaling, audio manipulation, subtitles, GIF creation, concatenation, metadata, and long-running background jobs.
+description: Convert, transcode, trim, filter, and process video and audio files using the ffmpeg CLI. Handles format conversion, encoding, scaling, audio manipulation, subtitles, GIF creation, concatenation, transitions, picture-in-picture/overlay compositing, multi-track audio mixing, metadata, and long-running background jobs.
 compatibility: Requires ffmpeg installed and available in PATH.
 ---
 
@@ -323,6 +323,33 @@ ffmpeg -y -nostdin -i input.mp4 -af "adelay=250|250" -c:v copy output.mp4
 ffmpeg -y -nostdin -i input.mp4 -vf setpts=PTS+0.25/TB -c:a copy output.mp4
 ```
 
+### Mixing multiple audio tracks
+
+`amix` combines several audio inputs into one track — e.g. a drone's recorded audio plus a separate voiceover, or a screen recording's system audio plus a phone's ambient mic.
+
+```bash
+ffmpeg -y -nostdin -i drone.mp4 -i voiceover.wav -filter_complex \
+  "[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=2[a]" \
+  -map 0:v -map "[a]" -c:v copy -c:a aac output.mp4
+```
+
+- `duration=first` — output length matches the first input; use `duration=longest` to keep the longer of the two instead.
+- `amix` averages volume across inputs, which quietens each track — apply `volume` to one or more inputs before mixing to correct the balance, e.g. keep original audio low under a voiceover:
+
+```bash
+ffmpeg -y -nostdin -i drone.mp4 -i voiceover.wav -filter_complex \
+  "[0:a]volume=0.3[bg]; [bg][1:a]amix=inputs=2:duration=first[a]" \
+  -map 0:v -map "[a]" -c:v copy -c:a aac output.mp4
+```
+
+### Replacing a clip's audio entirely
+
+```bash
+ffmpeg -y -nostdin -i video.mp4 -i new_audio.wav -map 0:v -map 1:a -c:v copy -shortest output.mp4
+```
+
+`-shortest` trims output to the shorter of the two streams, avoiding trailing silence or a frozen last frame when the replacement audio and video lengths don't match.
+
 ---
 
 ## Stream Selection & Mapping
@@ -438,6 +465,91 @@ ffmpeg -y -nostdin -i part1.mp4 -i part2.mp4 \
 ```
 
 `concat=n=2:v=1:a=1` — concatenate 2 segments, 1 video stream, 1 audio stream.
+
+### Normalizing mismatched sources before concat
+
+Clips from different devices (drone, phone, screen recording) rarely share resolution, frame rate, or sample aspect ratio. Feeding mismatched clips into `concat` produces errors or corrupted output — normalize each one first:
+
+```bash
+ffmpeg -y -nostdin -i drone.mp4 -i phone.mp4 -i screen.mp4 -filter_complex \
+  "[0:v]scale=1920:1080,fps=30,setsar=1[v0]; \
+   [1:v]scale=1920:1080,fps=30,setsar=1[v1]; \
+   [2:v]scale=1920:1080,fps=30,setsar=1[v2]; \
+   [v0][0:a][v1][1:a][v2][2:a]concat=n=3:v=1:a=1[v][a]" \
+  -map "[v]" -map "[a]" -c:v libx264 -crf 23 -c:a aac output.mp4
+```
+
+`setsar=1` matters as much as `scale` and `fps` here — a mismatched sample aspect ratio between clips is a common, easy-to-miss cause of `concat` failing even when width/height already match.
+
+---
+
+## Transitions Between Clips
+
+Plain `concat` produces a hard cut. For a crossfade, use `xfade` (video) and `acrossfade` (audio) instead of `concat`.
+
+`xfade` needs the duration of the transition and an `offset` — the point in the first clip (from its start) where the transition begins, i.e. `clip1_duration - transition_duration`.
+
+```bash
+ffprobe -v quiet -of csv=p=0 -show_entries format=duration part1.mp4
+# e.g. part1.mp4 is 10s long; use a 1s crossfade -> offset=9
+
+ffmpeg -y -nostdin -i part1.mp4 -i part2.mp4 -filter_complex \
+  "[0:v][1:v]xfade=transition=fade:duration=1:offset=9[v]; \
+   [0:a][1:a]acrossfade=d=1[a]" \
+  -map "[v]" -map "[a]" -c:v libx264 -crf 23 -c:a aac output.mp4
+```
+
+Other `transition=` values: `wipeleft`, `wiperight`, `slideup`, `slidedown`, `circleopen`, `dissolve`, and more — see `ffmpeg -h filter=xfade` for the full list. For more than two clips, chain `xfade` pairwise (output of the first pair feeds into the next), recalculating `offset` from cumulative duration each time.
+
+---
+
+## Compositing: Overlay & Picture-in-Picture
+
+Combine two or more video sources into one frame with `overlay`. Typical use: full-screen drone footage with a small inset of a phone or laptop screen recording in a corner.
+
+```bash
+# Corner PIP: laptop screen scaled to 320px wide, bottom-right corner, 20px margin
+ffmpeg -y -nostdin -i drone.mp4 -i laptop_screen.mp4 -filter_complex \
+  "[1:v]scale=320:-2[pip]; \
+   [0:v][pip]overlay=main_w-overlay_w-20:main_h-overlay_h-20[v]" \
+  -map "[v]" -map 0:a -c:v libx264 -crf 23 -c:a aac output.mp4
+```
+
+- `overlay=X:Y` sets the top-left corner of the inset on the main frame. `main_w`/`main_h` and `overlay_w`/`overlay_h` are available as expressions.
+- Corner positions: `20:20` (top-left), `main_w-overlay_w-20:20` (top-right), `20:main_h-overlay_h-20` (bottom-left), `main_w-overlay_w-20:main_h-overlay_h-20` (bottom-right).
+- `-map 0:a` keeps only the main clip's audio — the overlay's audio is otherwise silently dropped unless separately mapped or mixed (see [Mixing multiple audio tracks](#mixing-multiple-audio-tracks)).
+
+### Border around the inset
+
+```bash
+ffmpeg -y -nostdin -i drone.mp4 -i laptop_screen.mp4 -filter_complex \
+  "[1:v]scale=320:-2,pad=w=iw+6:h=ih+6:x=3:y=3:color=white[pip]; \
+   [0:v][pip]overlay=main_w-overlay_w-20:main_h-overlay_h-20[v]" \
+  -map "[v]" -map 0:a -c:v libx264 -crf 23 -c:a aac output.mp4
+```
+
+### Multiple insets at once
+
+Chain overlays — each stage's output feeds the next:
+
+```bash
+ffmpeg -y -nostdin -i drone.mp4 -i phone.mp4 -i screen.mp4 -filter_complex \
+  "[1:v]scale=320:-2[pip1]; \
+   [2:v]scale=320:-2[pip2]; \
+   [0:v][pip1]overlay=20:20[tmp]; \
+   [tmp][pip2]overlay=main_w-overlay_w-20:20[v]" \
+  -map "[v]" -map 0:a -c:v libx264 -crf 23 -c:a aac output.mp4
+```
+
+### Side-by-side instead of overlaid
+
+Use `hstack`/`vstack` (equal-sized inputs) or `xstack` (custom grid) to show each source fully rather than one covering part of another:
+
+```bash
+ffmpeg -y -nostdin -i drone.mp4 -i screen.mp4 -filter_complex \
+  "[0:v]scale=960:-2[l]; [1:v]scale=960:-2[r]; [l][r]hstack=inputs=2[v]" \
+  -map "[v]" -c:v libx264 -crf 23 output.mp4
+```
 
 ---
 
@@ -574,6 +686,49 @@ for f in *.mp4; do
   fi
 done
 ```
+
+---
+
+## Example: Editing Together Multiple Sources
+
+A common multi-camera scenario: full-screen drone footage, a phone clip of takeoff/landing, and a screen recording of a controller app, combined into one edited video with the screen recording inset as PIP during the flight, all clips joined together, and audio mixed from multiple tracks.
+
+General workflow:
+
+1. **Trim each source to its usable range first** (fast, stream-copy where possible) — don't carry raw, untrimmed footage through every downstream step.
+2. **Normalize before combining** — mismatched resolution, frame rate, or SAR across a phone/drone/screen recording will break `concat` and produce garbage with `overlay`. Scale, set `fps`, and `setsar=1` on every clip before combining.
+3. **Composite PIP for the segments where the second angle matters** (e.g. the controller screen during flight), then `concat` that composited segment with plain full-screen segments (e.g. the takeoff shot alone).
+4. **Mix audio last**, once the video timeline is locked — layer drone audio, phone audio, and/or a voiceover with `amix`, since drone motor noise typically needs to sit lower than a voiceover or the phone's audio.
+
+```bash
+# 1. Trim to usable ranges (stream copy, fast)
+ffmpeg -y -nostdin -ss 00:00:05 -to 00:04:30 -i drone_raw.mp4 -c copy drone_trim.mp4
+ffmpeg -y -nostdin -ss 00:00:10 -to 00:00:40 -i phone_raw.mp4 -c copy phone_trim.mp4
+ffmpeg -y -nostdin -ss 00:00:00 -to 00:04:00 -i screen_raw.mp4 -c copy screen_trim.mp4
+
+# 2 & 3. Normalize the drone clip and overlay the screen recording as PIP for its duration
+ffmpeg -y -nostdin -i drone_trim.mp4 -i screen_trim.mp4 -filter_complex \
+  "[0:v]scale=1920:1080,fps=30,setsar=1[main]; \
+   [1:v]scale=480:-2,fps=30[pip]; \
+   [main][pip]overlay=main_w-overlay_w-30:main_h-overlay_h-30[v]" \
+  -map "[v]" -map 0:a -c:v libx264 -crf 23 -c:a aac flight_with_pip.mp4
+
+# Normalize the phone takeoff clip separately (no PIP, just matching format)
+ffmpeg -y -nostdin -i phone_trim.mp4 -vf "scale=1920:1080,fps=30,setsar=1" \
+  -c:v libx264 -crf 23 -c:a aac phone_norm.mp4
+
+# Concat the phone takeoff clip in front of the flight+PIP segment
+ffmpeg -y -nostdin -i phone_norm.mp4 -i flight_with_pip.mp4 -filter_complex \
+  "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]" \
+  -map "[v]" -map "[a]" -c:v libx264 -crf 23 -c:a aac joined.mp4
+
+# 4. Mix in a separately recorded voiceover, lowering the original audio underneath it
+ffmpeg -y -nostdin -i joined.mp4 -i voiceover.wav -filter_complex \
+  "[0:a]volume=0.4[bg]; [bg][1:a]amix=inputs=2:duration=first[a]" \
+  -map 0:v -map "[a]" -c:v copy -c:a aac final.mp4
+```
+
+Writing an intermediate file at each stage means a mistake in one step doesn't force redoing the whole pipeline — cheap disk space is worth it against re-running a long transcode.
 
 ---
 
