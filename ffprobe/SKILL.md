@@ -6,7 +6,7 @@ compatibility: Requires ffprobe installed and available in PATH (ships with FFmp
 
 # ffprobe
 
-ffprobe is a read-only multimedia stream analyzer. It never modifies the input, so it is safe to run on anything.
+ffprobe is a read-only multimedia stream analyzer: it does not modify the input. It still parses potentially untrusted media and can make network requests, so keep it updated and bound expensive or remote probes.
 
 ```bash
 ffprobe [OPTIONS] INPUT
@@ -166,7 +166,7 @@ ffprobe -v error -select_streams v:0 -read_intervals %10 -show_entries frame=pts
 
 The packet `flags` field is a 3-character string: `K` = keyframe, `D` = discard, `C` = corrupt, `_` = not set.
 
-`-count_packets` adds `nb_read_packets` (a fast exact frame count). `-count_frames` adds `nb_read_frames` through a full decode pass, so it is slow on long files.
+`-count_packets` adds `nb_read_packets` without a full decode. Packet count is **not a guaranteed frame count**: codec/container packetization can differ. Use `-count_frames` for `nb_read_frames` when a decoded frame count is required; it can be slow on long files.
 
 ```bash
 ffprobe -v error -select_streams v:0 -count_packets -show_entries stream=nb_read_packets -of csv=p=0 input.mp4
@@ -199,7 +199,7 @@ ffprobe -v error -show_packets -read_intervals "00:01:00%00:01:30" input.mp4  # 
 
 ## Remote and Network Sources
 
-ffprobe accepts URLs wherever it accepts file paths, including HLS/DASH manifests. For live streams, cap how much it reads: `-analyzeduration` is in microseconds and `-probesize` is in bytes.
+ffprobe accepts URLs, including HLS/DASH manifests. `-analyzeduration` (microseconds) and `-probesize` (bytes) limit analysis, not total wall time or total reading with `-show_packets`/`-show_frames`. Use protocol-supported `-rw_timeout` (microseconds) for blocked I/O plus the harness's overall timeout; use `-read_intervals` to bound packet/frame work. Network access can disclose your address or fetch nested manifest resources.
 
 ```bash
 ffprobe -v error -show_streams -of json "https://example.com/playlist.m3u8"
@@ -250,8 +250,8 @@ ffprobe runs as a native Windows executable under Git Bash and behaves normally.
 3. **Prefer `avg_frame_rate` over `r_frame_rate`** for variable-frame-rate content.
 4. **Check for rotation side data** on phone footage before scaling or cropping — width and height are pre-rotation values.
 5. **Avoid `-count_frames` and `-show_frames` on long files** unless needed. Use `-count_packets` or `-read_intervals` instead.
-6. **ffprobe never modifies files** — safe to run on any input without backups.
-7. **Use `ffprobe -sections`** to discover available sections and field names.
+6. **ffprobe does not modify its input**, but remote access and untrusted parsing still need normal network, timeout, and sandbox precautions.
+7. **Use `ffprobe -sections`** to discover section names; inspect a small JSON sample or the documentation for actual fields.
 
 ---
 
