@@ -665,14 +665,17 @@ Test on one file, then loop. Always quote `"$f"`, keep `-nostdin` (otherwise ffm
 ```bash
 mkdir -p out
 for f in *.mov; do
-  [ -e "out/${f%.*}.mp4" ] && continue        # resumable: skip finished files
+  out="out/${f%.*}.mp4"
+  [ -e "$out" ] && continue                   # resumable: skip finished files
+  tmp="out/${f%.*}.part.mp4"                  # keeps .mp4 so ffmpeg picks the muxer
   ffmpeg -y -nostdin -hide_banner -loglevel error -i "$f" \
-    -c:v libx264 -crf 23 -pix_fmt yuv420p -c:a aac -movflags +faststart "out/${f%.*}.mp4" \
-    || echo "FAILED: $f" >> out/failures.txt
+    -c:v libx264 -crf 23 -pix_fmt yuv420p -c:a aac -movflags +faststart "$tmp" \
+    && mv "$tmp" "$out" \
+    || { rm -f "$tmp"; echo "FAILED: $f" >> out/failures.txt; }
 done
 ```
 
-For long batches, use the available harness background facility and append a line per finished file to a log so progress is visible with `wc -l`. A file's existence alone does not prove it finished: write to a temporary output retaining the correct media extension, verify it, then rename to the final destination. x264/x265 already use every core, so parallel transcodes rarely help; parallelism does help many small light jobs (thumbnails, remuxes) via `xargs -P`.
+Each file is written to a `.part.mp4` and renamed only when ffmpeg succeeds, so an interrupted run never leaves a half-written file that the skip check would treat as finished. For long batches, use the available harness background facility and append a line per finished file to a log so progress is visible with `wc -l`. x264/x265 already use every core, so parallel transcodes rarely help; parallelism does help many small light jobs (thumbnails, remuxes) via `xargs -P`.
 
 ---
 

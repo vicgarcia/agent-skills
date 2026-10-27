@@ -17,7 +17,7 @@ The skill itself is [`SKILL.md`](SKILL.md). All content lives in that one file; 
 - **Seeing video** — single frames, keyframes, scene detection (including the low threshold text-only slides need), N-frames-evenly-spaced, tiled contact sheets, waveforms, and images→video.
 - **Describe an unknown video** — technical summary plus a contact sheet in a few commands, without watching it.
 - **Size targets** — a worked two-pass recipe that fits a video under an upload limit (tested: 12.4 MB → 1.02 MB for a 1 MB target).
-- **Operations** — background execution with progress files, resumable batch loops, and Windows/Git Bash notes.
+- **Operations** — background execution with progress files, resumable batch loops that never leave half-written outputs, and Windows/Git Bash notes.
 
 ## Requirements
 
