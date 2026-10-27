@@ -1,6 +1,7 @@
 ---
 name: nmap
 description: Network reconnaissance using nmap and nmap-vulners. Covers host discovery, port scanning, service detection, OS fingerprinting, NSE scripts, CVE lookup via vulners.com, and timeout-safe progressive scanning for reliable agent execution.
+compatibility: Requires nmap. Raw-socket scan types (SYN, UDP, OS detection) need root or setcap on the nmap binary; CVE lookup needs the vulners NSE script. For authorized testing only.
 ---
 
 # Nmap Network Reconnaissance
