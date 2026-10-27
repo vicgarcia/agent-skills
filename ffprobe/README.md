@@ -9,7 +9,7 @@ The skill itself is [`SKILL.md`](SKILL.md). All content lives in that one file; 
 - **Compact summary** — a single one-liner that reports container, duration, and every stream.
 - **Streams & format** — codecs, resolution, frame rate, pixel format, HDR indicators, rotation side-data, channel layout, subtitle codecs.
 - **Selective output** — `-show_entries`, `-of json`/`compact`/`csv`, extracting bare scalar values for shell variables.
-- **Packets, frames, keyframes** — keyframe timestamps, I/P/B frame types, fast vs full-decode frame counts.
+- **Packets, frames, keyframes** — keyframe timestamps, I/P/B frame types, and packet counts versus decoded frame counts.
 - **Chapters, time ranges, and remote/HLS sources.**
 - **Scripting patterns** — audio detection, batch duration/resolution tables, full-metadata dumps, and Windows/Git Bash notes.
 

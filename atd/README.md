@@ -9,11 +9,11 @@ The skill itself is [`SKILL.md`](SKILL.md). All content lives in that one file; 
 - **Scheduling** — relative times, specific times/dates, from a script file, and multi-line jobs.
 - **Managing jobs** — listing pending jobs (`atq`), viewing a job's contents, and removing jobs.
 - **Job queues, user/shell/permissions**, and the environment a job inherits.
-- **Practical patterns**, a time-expression reference, and how to verify the `atd` daemon is running.
+- **Practical patterns**, a time-expression reference, and how to verify the scheduler is running (`atd` on Linux, `atrun` on macOS).
 
 ## Requirements
 
-The `at` package installed and the `atd` daemon running. Standard on most Unix systems; not native to Windows.
+`at` plus an enabled scheduler: commonly `atd` on Linux. macOS ships `at` but runs jobs through launchd's `atrun`, which is disabled by default (see `man atrun`). Not native to Windows.
 
 ```bash
 sudo apt install at && sudo systemctl enable --now atd    # Debian/Ubuntu

@@ -14,7 +14,7 @@ The skill itself is [`SKILL.md`](SKILL.md). All content lives in that one file; 
 
 ## Requirements
 
-POSIX `date` (Unix/macOS/Linux). GNU `date` is assumed for arithmetic (`-d`); macOS/BSD `date` uses `-v` syntax.
+Unix `date`. Basic formatting is portable; arithmetic needs GNU extensions (`-d`) or macOS/BSD extensions (`-v`, `-j -f`), not just POSIX support. Examples use Bash. Minimal BusyBox builds may support fewer options.
 
 ## Canonical documentation
 
