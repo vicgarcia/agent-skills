@@ -47,7 +47,7 @@ Use the full `<mxfile>` wrapper only when the diagram needs multiple pages:
 
 1. IDs must be unique within the diagram — use descriptive strings (`"start"`, `"decision-1"`) or sequential numbers
 2. Vertices require `vertex="1"`, edges require `edge="1"` — never both on the same cell
-3. Every edge cell must contain `<mxGeometry relative="1" as="geometry" />` as a child — self-closing edge cells are invalid
+3. Every edge cell must contain `<mxGeometry relative="1" as="geometry" />` as a child — a self-closing edge cell parses but does not render
 4. Edge `source` and `target` must reference existing vertex IDs
 5. Children of containers use coordinates **relative to the container**, not the canvas
 6. HTML in `value` attributes must be XML-escaped: `<` → `&lt;`, `>` → `&gt;`, `&` → `&amp;`, `"` → `&quot;`
@@ -236,7 +236,7 @@ Use `endFill=0` for hollow variants (e.g. UML aggregation: `endArrow=diamond;end
 
 ### Waypoints (explicit edge routing)
 
-When the auto-router produces crossings or bad paths, force an edge through specific canvas coordinates using `<Array as="points">` inside `<mxGeometry>`. Each `<mxPoint>` is an absolute canvas coordinate the edge must pass through.
+When the auto-router produces crossings or bad paths, force an edge through specific coordinates using `<Array as="points">` inside `<mxGeometry>`. Points use the edge parent's coordinate system: canvas coordinates when `parent="1"`, relative to the container when the edge is parented inside one.
 
 ```xml
 <mxCell id="e1" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;" edge="1" source="svc-a" target="svc-b" parent="1">
@@ -469,7 +469,7 @@ rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;
 
 ### Stroke width
 
-`strokeWidth` controls border thickness. Default is `2` for most shapes. Use it to draw the eye to critical nodes.
+`strokeWidth` controls border thickness. The default is `1`; set it explicitly to draw the eye to critical nodes.
 
 ```
 strokeWidth=3;   <!-- subtle emphasis -->
@@ -653,16 +653,17 @@ drawio -x -f png -b 20 --normalize -o diagram.png diagram.drawio
 
 When the user asks to modify an existing `.drawio` file:
 
-1. **Read the file as XML** — identify existing cells by their `id`, `value`, and shape style
-2. **Understand the structure** — note containers, layers, and parent-child relationships before making changes
-3. **Targeted edits**:
+1. **Check the format first** — files saved by the editor may hold each `<diagram>` as compressed Base64/deflate rather than plain XML. Re-save uncompressed (File → Properties → uncheck Compressed) or export with `drawio -x -f xml -u` before cell-level edits. Never replace a file you can't read with a new diagram
+2. **Read the file as XML** — identify existing cells by their `id`, `value`, and shape style
+3. **Understand the structure** — note containers, layers, and parent-child relationships before making changes
+4. **Targeted edits**:
    - Add a node: create a new `mxCell` with a unique ID not already in the file
    - Remove a node: delete its `mxCell` and any edges that reference its ID as source or target
    - Modify a node: update `value`, `style`, or `mxGeometry` attributes in place
    - Reroute an edge: update its `source` or `target` attributes
    - Rename a label: update the `value` attribute
-4. **Preserve existing IDs** — never reassign an ID that already exists
-5. **Preserve existing layout** — when adding nodes, position them consistently with the existing grid and spacing; don't move nodes that aren't being changed
+5. **Preserve existing IDs** — never reassign an ID that already exists
+6. **Preserve existing layout** — when adding nodes, position them consistently with the existing grid and spacing; don't move nodes that aren't being changed
 
 When the change is substantial (restructuring, new sections, major layout shift), a full redraw may be cleaner than targeted edits — use judgment based on scope.
 
@@ -719,7 +720,7 @@ The draw.io desktop app includes a CLI for headless export of `.drawio` files to
 drawio --version
 ```
 
-If the command is not found, check the platform's default install location before concluding it is missing. **On Windows the installer does not put `drawio` on `PATH`**; the executable is `draw.io.exe`:
+If the command is not found, check the platform's default install location before concluding it is missing. On macOS the app's CLI is `/Applications/draw.io.app/Contents/MacOS/draw.io`. **On Windows the installer does not put `drawio` on `PATH`**; the executable is `draw.io.exe`:
 
 ```bash
 "/c/Program Files/draw.io/draw.io.exe" --version        # Git Bash
@@ -749,9 +750,10 @@ drawio --export --format png --page-index 1 --output page1.png diagram.drawio
 # All pages as one PDF (--all-pages applies to PDF and HTML only)
 drawio --export --format pdf --all-pages --output diagram.pdf diagram.drawio
 
-# Every page as its own PNG: --all-pages does NOT do this for PNG, so loop over page numbers
-n=$(grep -o '<diagram ' diagram.drawio | wc -l)
-for p in $(seq 1 $n); do drawio -x -f png -p $p -o "diagram-$p.png" diagram.drawio; done
+# Every page as its own PNG: --all-pages does NOT do this for PNG, so loop over page numbers.
+# Count pages by parsing the XML; a bare <mxGraphModel> is one page
+n=$(python3 -c 'import sys, xml.etree.ElementTree as E; r=E.parse(sys.argv[1]).getroot(); print(len(r.findall("diagram")) if r.tag == "mxfile" else 1)' diagram.drawio)
+for p in $(seq 1 "$n"); do drawio -x -f png -p "$p" -o "diagram-$p.png" diagram.drawio || break; done
 
 # Embed the diagram source in the PNG so it can be reopened and edited in draw.io
 drawio --export --format png --embed-diagram --output diagram.png diagram.drawio
@@ -780,6 +782,8 @@ drawio --export --format png --embed-diagram --output diagram.png diagram.drawio
 | `--layout <preset>` | Auto-layout before export; see Auto-Layout above |
 | `--normalize` | Repair generated diagrams at export time; see Auto-Layout above |
 | `--uncompressed` (`-u`) | Uncompressed XML output (XML and SVG formats) |
+| `--check` (`-k`) | Don't overwrite existing output files |
+| `--timeout <seconds>` | Fail an export that takes longer than this and move on (default: no limit) |
 
 ### Linux headless requirement
 
