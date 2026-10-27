@@ -206,7 +206,7 @@ done | grep "^Friday"
 ### Nth Weekday of a Month (e.g. 3rd Thursday)
 
 ```bash
-# 3rd Thursday of November 2025 (GNU) — e.g. Thanksgiving
+# 3rd Thursday of November 2025 (GNU) — US Thanksgiving is the 4th (use 4 → 2025-11-27)
 count=0; d=1
 while [ $count -lt 3 ]; do
   dow=$(date -d "2025-11-$(printf '%02d' $d)" +"%A")
@@ -229,8 +229,8 @@ echo "2025-11-$(printf '%02d' $d)"   # 2025-11-20
 
 ```bash
 # Start of current week (Monday) (GNU)
-date -d "last Monday" +"%Y-%m-%d"                          # 2025-04-28 (or today if Monday)
-date -d "$(date +%Y-%m-%d) -$(date +%u) days +1 day" +"%Y-%m-%d"  # reliable Monday
+date -d "last Monday" +"%Y-%m-%d"                          # wrong on a Monday: returns the previous week's Monday
+date -d "$(date +%Y-%m-%d) -$(date +%u) days +1 day" +"%Y-%m-%d"  # reliable Monday (today if Monday)
 
 # Start of current week (Monday) (macOS)
 date -v-$(( $(date +%u) - 1 ))d +"%Y-%m-%d"
@@ -253,10 +253,11 @@ date -v+1w +"%Y-%m-%d"
 ## Common Calculations
 
 ```bash
-# Days until deadline
-deadline="2025-04-15"
-echo $(( ($(date -d "$deadline" +%s) - $(date +%s)) / 86400 )) days              # GNU
-echo $(( ($(date -j -f "%Y-%m-%d" "$deadline" +%s) - $(date +%s)) / 86400 )) days # macOS
+# Calendar days until deadline — parse both dates at UTC midnight so the time of
+# day and daylight-saving changes can't shift the count by one
+deadline="2025-04-15"; today=$(date +%Y-%m-%d)
+echo $(( ($(date -u -d "$deadline 00:00:00" +%s) - $(date -u -d "$today 00:00:00" +%s)) / 86400 )) days    # GNU
+echo $(( ($(date -j -u -f "%Y-%m-%d %H:%M:%S" "$deadline 00:00:00" +%s) - $(date -j -u -f "%Y-%m-%d %H:%M:%S" "$today 00:00:00" +%s)) / 86400 )) days  # macOS
 
 # Current quarter
 echo "Q$(( ($(date +%-m) - 1) / 3 + 1 )) $(date +%Y)"
