@@ -8,22 +8,60 @@ compatibility: Requires nmap. Raw-socket scan types (SYN, UDP, OS detection) nee
 
 You are performing network reconnaissance using nmap. This skill covers the full recon pipeline from discovery through vulnerability identification, with agent-safe patterns for reliable execution.
 
+## Find the Right Workflow
+
+Use the worked recipes for an end-to-end task and the references when composing a custom scan. Repeated commands in those two contexts are intentional.
+
+| I want to… | Start here | Then inspect |
+|---|---|---|
+| Find live machines on a network | [Quick Network Snapshot](#quick-network-snapshot) | [Host Discovery](#host-discovery) for blocked probes and MAC/vendor evidence |
+| Investigate one machine thoroughly | [Single Host Deep Dive](#single-host-deep-dive) | [Service and Version Detection](#service-and-version-detection), [OS Detection](#os-detection) |
+| Run discovery → inventory → CVE checks | [The Full Recon Kill Chain](#the-full-recon-kill-chain) | [Interpreting Results](#interpreting-results) |
+| Choose targets, ports, or scan techniques | [Target Specification](#target-specification), [Port Specification](#port-specification) | [Scan Types](#scan-types), [Common Port Reference](#common-port-reference) |
+| Assess web and TLS services | [Web Server Assessment](#web-server-assessment) | [SSL/TLS Deep Inspection](#ssltls-deep-inspection), [HTTP Deep Dive](#http-deep-dive) |
+| Investigate SSH, SMB, DNS, databases, or industrial services | [High-Value Script Combos](#high-value-script-combos) | [Common Scripts by Service](#common-scripts-by-service) |
+| Identify home-network or IoT services | [IoT / Smart Home Survey](#iot--smart-home-survey) | [Broadcast Discovery](#broadcast-discovery-find-hidden-devices) |
+| Find UDP services and interpret ambiguous ports | [UDP Network Sweep](#udp-network-sweep) | [UDP Scan](#udp-scan), [Port States](#port-states) |
+| Look up likely CVEs by detected version | [CVE Lookup with nmap-vulners](#cve-lookup-with-nmap-vulners) | [Vulnerability Scanning](#vulnerability-scanning) for active checks |
+| Track what changed between observations | [Network Baseline](#network-baseline-save--diff) | [Tracking Changes with ndiff](#tracking-changes-with-ndiff) |
+| Extract hosts, ports, or service records | [Output Formats](#output-formats) | [Parsing XML Output with Python](#parsing-xml-output-with-python) |
+| Diagnose slow scans, missing hosts, or unclear banners | [Troubleshooting](#troubleshooting) | [Timing and Performance](#timing-and-performance), [Interpreting Results](#interpreting-results) |
+| Work with larger ranges or IPv6 | [Advanced Techniques](#advanced-techniques) | [Large Network Optimization](#large-network-optimization), [IPv6 Scanning](#ipv6-scanning) |
+| Test firewall/IDS behavior or investigate deceptive services | [Firewall / IDS Evasion](#firewall--ids-evasion) | [Scan Through Proxies](#scan-through-proxies), [Honeypot Detection](#honeypot-detection) for limitations |
+| Recall a command quickly | [Quick Reference](#quick-reference) | The linked workflow/reference above for prerequisites and interpretation |
+
+Examples use Bash and placeholder targets; replace them with authorized scope. `sudo` examples require suitable privileges. Vulnerability checks, credential attempts, broadcast probes, and firewall/IDS tests have different side effects—select them to match the agreed assessment, not just because a port is open.
+
 ## Installed Tools
 
 | Tool | Purpose |
 |------|---------|
 | `nmap` | Port scanner, service detector, NSE script engine |
 | `vulners.nse` | NSE script — queries vulners.com API for CVEs by service version |
-| `ndiff` | Bundled with nmap — diffs two XML scan results |
+| `ndiff` | Diffs two XML scan results; may be packaged separately |
+
+Check the installed build and script catalog before using a recipe:
+
+```bash
+nmap --version
+nmap --script-help vulners
+nmap --script-help 'ssl-cert,smb-os-discovery'
+command -v ndiff
+```
+
+The script names below were checked against Nmap 7.99; packages and third-party script sets differ. Use [NSE script documentation](https://nmap.org/nsedoc/) and `--script-help NAME` to verify arguments and availability. Python XML recipes require Python 3; raw-packet privileges and interface names are platform-specific.
 
 ### Dockerfile Setup
 
 ```dockerfile
 # Install nmap
-RUN apt-get install -y nmap
+RUN apt-get update && apt-get install -y nmap libcap2-bin curl ca-certificates
 
 # Grant agent user raw socket access for privileged scan types (SYN, UDP, OS detection)
-# Not required if running as root
+# Linux only; not required if running as root. Container runtime must also
+# permit the capabilities. Use --privileged with nmap when relying on file caps
+# so it recognizes the non-root process's raw-packet permissions.
+# This is Nmap's --privileged flag, not Docker's unrelated --privileged mode.
 RUN setcap cap_net_raw,cap_net_admin+eip /usr/bin/nmap
 
 # Install vulners NSE script for CVE lookup via vulners.com API
@@ -31,6 +69,8 @@ RUN curl -fsSL https://raw.githubusercontent.com/vulnersCom/nmap-vulners/master/
     -o /usr/share/nmap/scripts/vulners.nse \
     && nmap --script-updatedb
 ```
+
+Many packages already include `vulners`; check before replacing it. For a reproducible image, review and pin the upstream script revision instead of relying on the moving `master` URL above. `--privileged` tells Nmap to assume the OS permissions exist; it does not grant missing capabilities. These Linux `setcap` instructions do not apply to macOS.
 
 ---
 
@@ -40,13 +80,14 @@ RUN curl -fsSL https://raw.githubusercontent.com/vulnersCom/nmap-vulners/master/
 - Always set `--host-timeout` on any scan covering more than one host.
 - Always extract open ports from a fast scan before running `-sV` or scripts.
 - Always use `/tmp` for output files unless instructed otherwise.
-- Use `--open` to suppress closed/filtered noise from output.
+- Use `--open` for compact inventory output; it also includes potentially open states such as UDP `open|filtered`. Omit it when preserving closed/filtered evidence matters, especially for baselines.
+- Treat the `/tmp` names below as example artifacts. Use a task-specific directory or prefix when multiple runs must coexist, and record paths between tool calls; shell variables do not necessarily persist across calls.
 
 ---
 
 ## Agent-Optimized Scanning
 
-Long-running scans that don't complete are the #1 failure mode for agent-driven nmap. The rules below guarantee predictable completion times.
+Long-running scans that don't complete are the #1 failure mode for agent-driven nmap. The patterns below keep work bounded and make progress visible; they do not guarantee a wall-clock completion time. `--host-timeout` applies per host, not to the whole command. A host that times out may have no port/version/OS results in the saved report; a script timeout can suppress that script's output. Use the harness's actual wall-clock timeout controls and report incomplete coverage.
 
 ### The Cardinal Rules
 
@@ -54,11 +95,11 @@ Long-running scans that don't complete are the #1 failure mode for agent-driven 
 2. **Always extract open ports from a fast scan before running service detection.** Never run `-sV` on all 65535 ports.
 3. **Scan one host at a time for deep work.** Loop over a host list rather than passing an entire subnet to a slow scan.
 4. **Every command touching more than one host must have `--host-timeout`.** Without it, one unresponsive host can block the entire scan indefinitely.
-5. **Prefer `--top-ports N` over `-p-`.** Top 100 ports covers ~98% of real-world services. Use full port scan only when specifically needed for a single host.
+5. **Prefer `--top-ports N` over `-p-`.** Top 100 ports is a quick sample of common services, not a guaranteed coverage percentage. Use full port scan only when specifically needed for a single host.
 
 ### Phase-Based Time Budget
 
-| Phase | Scope | Typical Command | Max Time |
+| Phase | Scope | Typical Command | Illustrative budget (not a guarantee) |
 |-------|-------|-----------------|----------|
 | 1. Host discovery | /24 network | `-sn -PR -PE` | ~30s |
 | 2. Quick port check | single host | `--top-ports 100 -T4` | ~15s |
@@ -71,16 +112,17 @@ Long-running scans that don't complete are the #1 failure mode for agent-driven 
 
 ### Safe Network Sweep Pattern
 
-When asked to scan a network, always do this in two separate commands — not one:
+**Use when:** you need discovery and a common-port inventory before choosing hosts for deeper work. **Requires:** authorized subnet scope and suitable privileges for the discovery probes. Keep these as separate phases so you can inspect the host list before scanning ports.
 
 ```bash
-# Command 1: fast discovery (30s max)
+# Command 1: discovery (roughly 30s on some responsive /24 LANs; not a wall-clock limit)
 sudo nmap -sn -PR -PE -PS22,80,443 \
   --max-retries 1 --host-timeout 5s \
-  192.168.1.0/24 -oG /tmp/hosts.gnmap
+  192.168.1.0/24 -oG /tmp/hosts.gnmap || exit 1
 
-# Extract live hosts
-grep "Up" /tmp/hosts.gnmap | awk '{print $2}' > /tmp/live-hosts.txt
+# Extract live hosts, and stop if discovery supplied no targets.
+awk '/Status: Up/ {print $2}' /tmp/hosts.gnmap > /tmp/live-hosts.txt
+[ -s /tmp/live-hosts.txt ] || { echo 'No discovered targets; inspect discovery first'; exit 0; }
 cat /tmp/live-hosts.txt
 
 # Command 2: top-1000 port scan on live hosts only (20s per host, host-timeout enforced)
@@ -91,31 +133,35 @@ nmap --top-ports 1000 -T4 --open \
   -oG /tmp/ports.gnmap
 ```
 
+**Expected/next:** `hosts.gnmap` records discovery and `ports.gnmap` records the top-port inventory. Verify completion/timeout diagnostics and choose hosts for the [per-host loop](#per-host-processing-loop). Missing discovery results or an incomplete port table require follow-up, not a conclusion that no services exist.
+
 ### Per-Host Processing Loop
 
-For service detection or CVE lookup, process one host at a time. This keeps each command bounded and results readable immediately:
+**Use when:** the port sweep has finished and selected hosts need version/CVE investigation. **Requires:** `/tmp/ports.gnmap` from the sweep and permission to send service-identification data to vulners.com. Replace the example host list with the hosts of interest; use the service-only command if external lookup is out of scope.
 
 ```bash
-# Extract open ports for a specific host
-PORTS=$(grep "^Host: 192.168.1.X " /tmp/ports.gnmap \
-  | grep -oP '\d+/open' | cut -d'/' -f1 | tr '\n' ',' | sed 's/,$//')
+for HOST in 192.168.1.100 192.168.1.101; do
+  # Exact address comparison; portable grep -E works on macOS and Linux.
+  PORTS=$(awk -v host="$HOST" '$1 == "Host:" && $2 == host' /tmp/ports.gnmap \
+    | grep -oE '[0-9]+/open/tcp' | cut -d/ -f1 | paste -sd, -)
 
-# If no open ports found, skip this host
-if [ -z "$PORTS" ]; then
-  echo "No open ports on 192.168.1.X, skipping"
-fi
+  if [ -z "$PORTS" ]; then
+    printf 'No confirmed open TCP ports for %s; skipping deep scans\n' "$HOST"
+    continue
+  fi
 
-# Service detection — only on extracted open ports (60s max)
-nmap -p "$PORTS" -sV -T4 --open --host-timeout 60s \
-  192.168.1.X -oN /tmp/services-192.168.1.X.txt
+  nmap -p "$PORTS" -sV -T4 --open --host-timeout 60s \
+    "$HOST" -oN "/tmp/services-$HOST.txt" || continue
 
-# CVE lookup — only on extracted open ports (90s max)
-nmap -p "$PORTS" -sV --script vulners --script-args mincvss=5.0 \
-  --script-timeout 30s -T4 --open --host-timeout 90s \
-  192.168.1.X -oX /tmp/cves-192.168.1.X.xml
+  nmap -p "$PORTS" -sV --script vulners --script-args mincvss=5.0 \
+    --script-timeout 30s -T4 --open --host-timeout 90s \
+    "$HOST" -oX "/tmp/cves-$HOST.xml"
+done
 ```
 
-Repeat this block per host. Read each output file after its scan completes before moving to the next host.
+**Expected:** one service report and one CVE XML file per processed host. No confirmed ports means no downstream command is launched. An empty port list can also mean a missing/timed-out host or an unscanned port set—not necessarily no services.
+
+**Next:** inspect each report and scan diagnostics before expanding the host list. Confirm candidate CVEs against vendor/package evidence; retry an incomplete host separately with an appropriate budget rather than treating absent output as a clean result.
 
 ### What Makes Scans Slow (Avoid These)
 
@@ -130,123 +176,121 @@ Repeat this block per host. Read each output file after its scan completes befor
 
 ### Scan Time Estimator
 
-Before running a scan, estimate time to decide if it's safe:
+Use a small representative scan to estimate runtime on the actual network. Record elapsed time, live-host count, ports attempted, retries, and how many hosts/scripts timed out. A hosts × ports formula is not reliable: probes overlap, filtering/rate limits cause retries, and service/NSE execution depends on the protocol.
 
-```
-hosts × ports × 0.01s ≈ minimum scan time (no service detection)
-hosts × ports × 0.05s ≈ with -sV service detection
-hosts × open_ports × 2s ≈ with --script vulners
-```
+For planning, scale the observed sample cautiously and leave headroom for slower hosts. Time budgets in this skill are starting estimates, not measured benchmarks for every network. If a scan exceeds the available tool window, split the existing work into smaller host groups or run it through a supported background facility. Preserve the target list and output so that an interrupted run can be distinguished from a completed one.
 
-Examples:
-- 10 hosts × 100 ports = ~10s for port scan
-- 10 hosts × 100 ports with -sV = ~50s (borderline, use `--host-timeout`)
-- 1 host × 1000 ports with -sV = ~50s (fine)
-- 256 hosts × 1000 ports = ~2560s (never do this)
+### Bounded Scan Profiles
 
-**Rule of thumb**: If `hosts × ports > 5000`, split the scan.
-
-### Guaranteed-Completion Scan Profiles
-
-Copy these verbatim for reliable agent execution:
+Choose the relevant invocation from this catalog rather than executing the entire block. Set `NETWORK`, `HOST`, and (where used) a nonempty comma-separated `PORTS` list first. The timeout numbers below are configured per-host budgets, not promises about total wall time.
 
 ```bash
-# PROFILE: network-alive — find live hosts in a /24 (≤30s)
+# PROFILE: network-alive — discover a /24; 5s host timeout
 sudo nmap -sn -PR -PE -PS22,80,443 --max-retries 1 --host-timeout 5s \
-  $NETWORK -oG /tmp/alive.gnmap
+  "$NETWORK" -oG /tmp/alive.gnmap
 
-# PROFILE: host-quick — top 100 ports on one host (≤15s)
+# PROFILE: host-quick — top 100 ports; 15s host timeout
 nmap --top-ports 100 -T4 --open --max-retries 2 --host-timeout 15s \
-  $HOST -oG /tmp/quick-$HOST.gnmap
+  "$HOST" -oG "/tmp/quick-$HOST.gnmap"
 
-# PROFILE: network-ports — top 1000 ports across all live hosts (≤20s/host)
+# PROFILE: network-ports — top 1000 ports on live hosts; 20s host timeout
 nmap --top-ports 1000 -T4 --open --max-retries 2 --host-timeout 20s \
   -iL /tmp/live-hosts.txt -oG /tmp/ports.gnmap
 
-# PROFILE: host-ports — all 65535 ports on a single host (≤120s)
-# Only use on one host at a time — never on a host list
+# PROFILE: host-ports — all 65535 TCP ports on one host; 120s host timeout
 sudo nmap -p- -T4 --min-rate 1000 --open --max-retries 2 --host-timeout 120s \
-  $HOST -oG /tmp/allports-$HOST.gnmap
+  "$HOST" -oG "/tmp/allports-$HOST.gnmap"
 
-# PROFILE: host-services — service detection on known open ports (≤60s)
-nmap -p $PORTS -sV --version-intensity 5 -T4 --open --host-timeout 60s \
-  $HOST -oN /tmp/services-$HOST.txt
+# PROFILE: host-services — known open ports; 60s host timeout
+nmap -p "$PORTS" -sV --version-intensity 5 -T4 --open --host-timeout 60s \
+  "$HOST" -oN "/tmp/services-$HOST.txt"
 
-# PROFILE: host-cves — CVE lookup on known open ports (≤90s)
-nmap -p $PORTS -sV --script vulners --script-args mincvss=5.0 \
+# PROFILE: host-cves — known open ports; 90s host timeout
+nmap -p "$PORTS" -sV --script vulners --script-args mincvss=5.0 \
   --script-timeout 30s -T4 --open --host-timeout 90s \
-  $HOST -oX /tmp/cves-$HOST.xml
+  "$HOST" -oX "/tmp/cves-$HOST.xml"
 
-# PROFILE: host-vulns — built-in vuln scripts on specific ports (≤120s)
-nmap -p $PORTS --script vuln --script-timeout 60s \
+# PROFILE: host-vulns — specific ports; 120s host timeout
+nmap -p "$PORTS" --script vuln --script-timeout 60s \
   -T4 --open --host-timeout 120s \
-  $HOST -oN /tmp/vulns-$HOST.txt
+  "$HOST" -oN "/tmp/vulns-$HOST.txt"
 
-# PROFILE: host-web — full web assessment on one host (≤120s)
+# PROFILE: host-web — web service assessment; 120s host timeout
 nmap -p 80,443,8080,8443 -sV \
   --script http-enum,http-headers,ssl-cert,ssl-enum-ciphers,vulners \
   --script-args mincvss=5.0 --script-timeout 30s \
   -T4 --open --host-timeout 120s \
-  $HOST -oN /tmp/web-$HOST.txt
+  "$HOST" -oN "/tmp/web-$HOST.txt"
 
-# PROFILE: host-smb — SMB enumeration + vuln check on one host (≤90s)
+# PROFILE: host-smb — SMB enumeration + selected vuln check; 90s host timeout
 nmap -p 445 -sV \
   --script smb-os-discovery,smb-security-mode,smb-enum-shares,smb-vuln-ms17-010,vulners \
   --script-timeout 30s -T4 --open --host-timeout 90s \
-  $HOST -oN /tmp/smb-$HOST.txt
+  "$HOST" -oN "/tmp/smb-$HOST.txt"
 
-# PROFILE: host-udp — high-value UDP ports on one host (≤120s)
+# PROFILE: host-udp — high-value UDP ports; 120s host timeout
 sudo nmap -sU -p 53,67,69,111,123,137,161,500,1900,5353 \
   --max-retries 1 -T4 --host-timeout 120s \
-  $HOST -oX /tmp/udp-$HOST.xml
+  "$HOST" -oX "/tmp/udp-$HOST.xml"
 ```
 
 ---
 
 ## The Full Recon Kill Chain
 
-The recommended end-to-end workflow for a complete network assessment. Steps 1-2 run against the whole network. Steps 3-6 run **per host** — never against the full subnet.
+**Use when:** an authorized assessment needs discovery, port inventory, service identification, candidate CVEs, and an OS estimate. **Requires:** Nmap/raw-packet privileges, the vulners script and internet access for the CVE step, and permission for that external disclosure. This is a workflow, not proof of complete security coverage.
+
+Steps 1–3 cover the network; steps 4–7 investigate one host at a time. Each code block runs in the same shell, or carry its variables/paths into subsequent tool calls.
 
 ```bash
-# Step 1: Discover live hosts — whole network (≤30s for /24)
+NETWORK=192.168.1.0/24
+
+# 1–2. Discover and extract live IPs.
 sudo nmap -sn -PR -PE -PS22,80,443 --max-retries 1 --host-timeout 5s \
-  192.168.1.0/24 -oG /tmp/hosts.gnmap
+  "$NETWORK" -oG /tmp/hosts.gnmap || exit 1
+awk '/Status: Up/ {print $2}' /tmp/hosts.gnmap > /tmp/live-hosts.txt
+[ -s /tmp/live-hosts.txt ] || { echo 'No discovered targets; check scope/probes/diagnostics'; exit 0; }
 
-# Step 2: Extract live IPs
-grep "Up" /tmp/hosts.gnmap | awk '{print $2}' > /tmp/live-hosts.txt
-cat /tmp/live-hosts.txt
+# 3. Inventory common ports on discovered targets.
+nmap --top-ports 1000 -T4 --open --max-retries 2 --host-timeout 20s \
+  -iL /tmp/live-hosts.txt -oG /tmp/ports.gnmap || exit 1
 
-# Step 3: Quick port scan — whole network, top 1000, host-timeout enforced (≤20s/host)
-# This gives a fast picture of the network without running forever.
-# For a full port scan (-p-), do it per host in step 4.
-nmap --top-ports 1000 -T4 --open \
-  --max-retries 2 --host-timeout 20s \
-  -iL /tmp/live-hosts.txt -oG /tmp/ports.gnmap
+HOST=192.168.1.100
+PORT_SCAN=/tmp/ports.gnmap
+```
 
-# ── per-host steps below — repeat for each IP of interest ──────────────────
+**Step 4, optional:** if the common-port inventory is insufficient, run the following on that host. Updating `PORT_SCAN` is essential: subsequent steps must read the full-port results, not accidentally reuse the top-1000 file.
 
-# Step 4 (optional): Full port scan on a single target (≤120s)
-# Only run this when top-1000 isn't enough and you need all 65535 ports.
+```bash
 sudo nmap -p- -T4 --min-rate 1000 --host-timeout 120s --open \
-  192.168.1.X -oG /tmp/allports-192.168.1.X.gnmap
+  "$HOST" -oG "/tmp/allports-$HOST.gnmap" || exit 1
+PORT_SCAN="/tmp/allports-$HOST.gnmap"
+```
 
-# Extract open ports from whichever scan you ran (step 3 or step 4)
-PORTS=$(grep "^Host: 192.168.1.X " /tmp/ports.gnmap \
-  | grep -oP '\d+/open' | cut -d'/' -f1 | tr '\n' ',' | sed 's/,$//')
+Continue from the selected inventory:
 
-# Step 5: Service detection on extracted open ports only (≤60s)
+```bash
+PORTS=$(awk -v host="$HOST" '$1 == "Host:" && $2 == host' "$PORT_SCAN" \
+  | grep -oE '[0-9]+/open/tcp' | cut -d/ -f1 | paste -sd, -)
+[ -n "$PORTS" ] || { echo 'No confirmed open TCP ports; inspect coverage before continuing'; exit 0; }
+
+# 5. Service identification; intensity 5 is lighter than the default 7.
 nmap -p "$PORTS" -sV --version-intensity 5 -T4 --host-timeout 60s --open \
-  192.168.1.X -oX /tmp/services-192.168.1.X.xml -oN /tmp/services-192.168.1.X.txt
+  "$HOST" -oX "/tmp/services-$HOST.xml" -oN "/tmp/services-$HOST.txt" || exit 1
 
-# Step 6: CVE lookup via vulners (≤90s)
+# 6. Candidate CVEs from detected service versions.
 nmap -p "$PORTS" -sV --script vulners --script-args mincvss=5.0 \
   --script-timeout 30s -T4 --host-timeout 90s \
-  192.168.1.X -oX /tmp/cves-192.168.1.X.xml
+  "$HOST" -oX "/tmp/cves-$HOST.xml"
 
-# Step 7: OS detection (≤30s)
-sudo nmap -p "$PORTS" -O --osscan-guess --max-os-tries 1 \
-  192.168.1.X -oN /tmp/os-192.168.1.X.txt
+# 7. OS detection uses a normal port set to seek both open and closed ports.
+sudo nmap -O --osscan-guess --max-os-tries 1 --host-timeout 90s \
+  "$HOST" -oN "/tmp/os-$HOST.txt"
 ```
+
+**Expected:** a live-host list, a port inventory, and host-specific service/CVE/OS reports. Review scan completion and timeout messages: a zero exit status or an existing file alone does not guarantee every host/script completed. OS matching works best with an open and a closed TCP port; scanning only known open ports can weaken it.
+
+**Interpret and follow up:** separate observed ports, inferred products/OS, and version-based CVE candidates in the report. Deepen uncertain services with the relevant [service script reference](#common-scripts-by-service), validate CVE applicability, and report unscanned ports or timed-out hosts explicitly.
 
 ---
 
@@ -255,6 +299,8 @@ sudo nmap -p "$PORTS" -O --osscan-guess --max-os-tries 1 \
 The `vulners` NSE script queries the vulners.com API with detected service/version banners and returns known CVEs with CVSS scores. **Requires `-sV` to detect versions first.**
 
 ### Basic Usage
+
+**Use when:** detected software versions need comparison with known vulnerability records. **Requires:** a locally available `vulners` script, reachable API, and approval to disclose product/CPE details. Start with known open ports from inventory; the unconstrained examples below illustrate the script invocation on the default port set.
 
 ```bash
 # Scan and check CVEs in one pass
@@ -288,26 +334,28 @@ nmap -p 22,80,443 -sV --version-intensity 5 --script vulners,ssl-cert,http-heade
 |     CVE-2021-28041   4.6   https://vulners.com/cve/CVE-2021-28041
 ```
 
-The first number is the CVSS score. Anything 9.0+ is critical, 7.0-8.9 is high, 4.0-6.9 is medium.
+The number after the CVE ID is the CVSS score: 9.0+ critical, 7.0–8.9 high, 4.0–6.9 medium. Keep the detected CPE/version and record link with the finding. A high score prioritizes investigation; it does not establish that this particular deployment is vulnerable.
 
 ### Notes
-- Requires internet access from the scanning host to reach vulners.com
-- Results depend on version accuracy — use `--version-intensity 5` or higher for best results
-- Combine with `-sC` default scripts for maximum context
+- Requires internet access; the script sends product/version or CPE information to vulners.com. Confirm this disclosure fits the assessment.
+- Version intensity 7 is the default; 5 is a lighter explicit choice and 9 tries every probe. More probing may improve identification, but does not validate CVE applicability.
+- Results are candidate matches, not proof of exploitability. Check vendor advisories, package backports, configuration, and prerequisites before reporting a confirmed vulnerability.
+- No output can mean missing identification, API failure, timeout, a score filter, or no matches. Capture diagnostics and distinguish those cases before calling the host clean.
+- `-sC` can add context, but default scripts are not uniformly harmless; inspect relevant scripts before combining them.
 
 ---
 
 ## Tracking Changes with ndiff
 
-`ndiff` compares two nmap XML scans and shows what changed — new hosts, new ports, closed ports, version changes.
+`ndiff` compares two nmap XML scans and shows what changed — new hosts, new ports, closed ports, version changes. **Requires:** two completed observations with the same target/port scope and scan options, plus `ndiff` installed. Preserve closed/filtered states rather than using `--open` for these baselines.
 
 ```bash
-# Save baseline — port-level, no service detection (safe on subnets)
-nmap --top-ports 1000 -T4 --open --host-timeout 20s \
+# Save baseline — port-level, no service detection
+nmap --top-ports 1000 -T4 --host-timeout 20s \
   192.168.1.0/24 -oX /tmp/baseline.xml
 
-# Later, save current state
-nmap --top-ports 1000 -T4 --open --host-timeout 20s \
+# Later, save current state using the same coverage
+nmap --top-ports 1000 -T4 --host-timeout 20s \
   192.168.1.0/24 -oX /tmp/current.xml
 
 # Diff them
@@ -324,6 +372,8 @@ ndiff /tmp/baseline.xml /tmp/current.xml | grep "^-"
 - `+` line: appeared in current scan, not in baseline (new)
 - `-` line: was in baseline, gone now (removed)
 - No prefix: unchanged
+
+`ndiff` exit status is 0 for no differences, 1 for differences, and 2 for an error. Do not treat a useful difference report as command failure. Inspect the full report before filtering: an absent port/host may reflect timeout, packet loss, or discovery changes rather than a real removal. See the [baseline workflow](#network-baseline-save--diff) for follow-up.
 
 ---
 
@@ -379,7 +429,7 @@ nmap -p 1-1024                # Port range
 nmap -p-                      # All 65535 ports (slow - use timeout!)
 nmap --top-ports 100          # Top 100 most common
 nmap --top-ports 1000         # Default coverage
-nmap -p T:80,U:53             # TCP 80, UDP 53
+sudo nmap -sS -sU -p T:80,U:53 192.168.1.100  # TCP 80 + UDP 53; both scan types selected
 ```
 
 ---
@@ -519,20 +569,29 @@ Host is up (0.0010s latency).
 MAC Address: 3C:22:FB:XX:XX:XX (Apple)
 ```
 
-Extract MAC addresses and vendors from a discovery scan:
+Extract MAC addresses and vendors from normal or XML output. Grepable output does **not** contain a usable `MAC:` field, so keep XML for correlation:
+
 ```bash
-# Normal output format (-oN) uses "MAC Address:"
-sudo nmap -sn 192.168.1.0/24 | grep -E "report for|MAC Address"
+sudo nmap -sn 192.168.1.0/24 -oN /tmp/hosts.txt -oX /tmp/hosts.xml
 
-# Grepable output format (-oG) uses "MAC:" — different field name
-grep "MAC:" /tmp/hosts.gnmap
+# Compact human view of the normal report
+grep -E 'report for|MAC Address:' /tmp/hosts.txt
 
-# To get IP + MAC together from grepable output:
-grep "Status: Up" /tmp/hosts.gnmap | awk '{print $2}' > /tmp/live.txt
-grep "MAC:" /tmp/hosts.gnmap
+# Structured IP / MAC / vendor correlation
+python3 - <<'PY'
+import xml.etree.ElementTree as ET
+
+for host in ET.parse('/tmp/hosts.xml').findall('host'):
+    ip = next((a.get('addr') for a in host.findall('address')
+               if a.get('addrtype') in {'ipv4', 'ipv6'}), None)
+    mac = host.find("address[@addrtype='mac']")
+    if ip:
+        print(ip, mac.get('addr', '-') if mac is not None else '-',
+              mac.get('vendor', '-') if mac is not None else '-', sep='\t')
+PY
 ```
 
-**Note**: MAC addresses are only visible when scanning from the same Layer 2 network (same subnet). Scanning across a router will only show the router's MAC.
+**Interpretation:** MAC information is normally available only for directly connected Layer-2 peers; a remote scan generally cannot obtain the target's MAC. Do not report the next-hop router's MAC as the remote device's identity. An OUI is a manufacturer hint, not a model/OS guarantee; virtual and randomized addresses weaken it. Correlate with hostname and service evidence in the [IoT workflow](#iot--smart-home-survey).
 
 ---
 
@@ -541,7 +600,7 @@ grep "MAC:" /tmp/hosts.gnmap
 ```bash
 nmap -sV 192.168.1.100                    # Basic version detection
 nmap -sV --version-intensity 0 ...        # Light (fastest)
-nmap -sV --version-intensity 5 ...        # Default (balanced)
+nmap -sV --version-intensity 5 ...        # Lighter than default (7)
 nmap -sV --version-intensity 9 ...        # Try all probes (slow)
 nmap -p 22,80,443 -sV -T4 --host-timeout 90s 192.168.1.100   # Targeted (recommended)
 ```
@@ -552,7 +611,7 @@ nmap -p 22,80,443 -sV -T4 --host-timeout 90s 192.168.1.100   # Targeted (recomme
 
 ```bash
 sudo nmap -O 192.168.1.100                    # Basic
-sudo nmap -O --osscan-guess --max-os-tries 1  # Aggressive guess, single attempt
+sudo nmap -O --osscan-guess --max-os-tries 1 192.168.1.100  # More speculative matching, single attempt
 sudo nmap -O -sV 192.168.1.100                # Combined OS + version
 ```
 
@@ -571,7 +630,7 @@ nmap -T5 ...   # Insane     - Very fast, may miss results
 
 ### Recommended Timeout Flags
 
-| Scan Type | Flags | Duration |
+| Scan Type | Flags | Illustrative duration (network-dependent) |
 |-----------|-------|----------|
 | Host discovery /24 | `--max-retries 1 --host-timeout 5s` | 10-30s |
 | Top 100 ports | `--max-retries 2 -T4` | 5-15s |
@@ -589,9 +648,9 @@ nmap -T5 ...   # Insane     - Very fast, may miss results
 ```bash
 nmap --script auth ...        # Authentication bypass/checks
 nmap --script brute ...       # Brute force attacks
-nmap --script default ...     # Safe, useful scripts (-sC)
+nmap --script default ...     # Default selection (-sC); not a guarantee of harmlessness
 nmap --script discovery ...   # Service discovery
-nmap --script safe ...        # Won't harm target
+nmap --script safe ...        # Classified lower-risk; still active, not risk-free
 nmap --script vuln ...        # Built-in vulnerability detection
 nmap --script vulners ...     # CVE lookup via vulners.com (installed)
 ```
@@ -606,6 +665,16 @@ nmap -sC ...                          # Same as --script default
 ```
 
 ### High-Value Script Combos
+
+**Use when:** inventory has identified a service and you want a focused bundle rather than the entire script catalog. **Requires:** the named scripts and matching ports from your inventory; these default ports are examples. The vulners component requires external API access. Database/SMB enumeration or empty-password tests can be more intrusive than banner reads; select the bundle to fit the authorized scope.
+
+| Bundle | Evidence to expect | Interpretation and next step |
+|---|---|---|
+| Web | Paths, headers, methods, certificates/ciphers, CVE candidates | Verify the intended vhost and investigate relevant paths/TLS findings; see [Web Server Assessment](#web-server-assessment) |
+| SSH | Host keys, authentication methods, algorithm lists, version candidates | Compare keys with trusted inventory and algorithms with policy; an offered method is not proof a login succeeds |
+| SMB | OS/domain hints, signing settings, share enumeration, selected active checks | Distinguish guest/anonymous visibility from authenticated access; verify the actual SMB dialect and permissions |
+| Databases | Product details and results of selected empty-password checks | A successful check is access evidence, not permission to read/export application data; confirm the affected instance and auth configuration |
+| Vulnerability sweep | Output from multiple active checks plus external version matches | Keep script-specific evidence separate from banner/CPE candidates; inspect missing/error/timeout output before reporting coverage |
 
 **Web servers**
 ```bash
@@ -710,9 +779,11 @@ nmap --script "broadcast-upnp-info" ...           # Broadcast UPnP discovery
 **VoIP / Telephony**
 ```bash
 nmap -sU -p 5060 --script sip-methods,sip-enum-users 192.168.1.100   # SIP
-nmap -p 1720 --script h323-info 192.168.1.100                         # H.323
-nmap -p 5038 --script asterisk-info 192.168.1.100                     # Asterisk AMI
+nmap -p 1720 -sV --version-all 192.168.1.100                          # H.323 fingerprinting
+nmap -p 5038 -sV --script banner 192.168.1.100                       # Asterisk AMI banner
 ```
+
+`h323-info` and `asterisk-info` are not bundled in the checked Nmap 7.99 script set and have no current official NSE documentation page. Do not assume those names exist. The built-in version probes/banner script above provide a starting point; label any separately sourced enumeration script with its dependency and verify its help before use.
 
 **LDAP / Active Directory**
 ```bash
@@ -733,49 +804,58 @@ nmap -oA /tmp/scan ...             # All formats at once
 
 ### Parsing Grepable Output
 
+Grepable output is useful for quick shell work but is deprecated for structured integrations; prefer XML for MACs, script results, and protocol/state fidelity. These examples use portable `grep -E`, not GNU-only `grep -P`:
+
 ```bash
-# Extract open ports for a specific host
-grep "^Host: 192.168.1.100 " /tmp/scan.gnmap \
-  | grep -oP '\d+/open' | cut -d'/' -f1 | tr '\n' ',' | sed 's/,$//'
+# Confirmed open TCP ports for exactly one address; output is a comma-separated list.
+awk '$1 == "Host:" && $2 == "192.168.1.100"' /tmp/scan.gnmap \
+  | grep -oE '[0-9]+/open/tcp' | cut -d/ -f1 | paste -sd, -
 
-# Extract all live hosts
-grep "Up" /tmp/hosts.gnmap | awk '{print $2}'
+# Discovered live hosts
+awk '/Status: Up/ {print $2}' /tmp/hosts.gnmap
 
-# Extract all open ports across all hosts
-grep "open" /tmp/scan.gnmap | grep -oP '\d+/open/tcp' | cut -d'/' -f1 | sort -un
+# Union of confirmed open TCP ports across all hosts (not a per-host mapping)
+grep -oE '[0-9]+/open/tcp' /tmp/scan.gnmap | cut -d/ -f1 | sort -un
 ```
+
+An empty result must stop downstream `-p "$PORTS"` commands. Inspect scan errors/timeouts before concluding there are no ports. The `/open/tcp` match deliberately excludes UDP and `open|filtered`; do not feed an all-host port union into a report claiming those ports are open on every host.
 
 ### Parsing XML Output with Python
 
 ```bash
-# Get all open ports from XML
-python3 -c "
+# Confirmed open ports by IP, preserving TCP/UDP identity.
+python3 - <<'PY'
 import xml.etree.ElementTree as ET
-tree = ET.parse('/tmp/scan.xml')
-for host in tree.findall('.//host'):
-    addr = host.find('address').get('addr')
-    ports = [p.get('portid') for p in host.findall('.//port') if p.find('state').get('state') == 'open']
-    if ports:
-        print(f'{addr}: {\", \".join(ports)}')
-"
 
-# Get service versions from XML
-python3 -c "
+for host in ET.parse('/tmp/scan.xml').findall('host'):
+    addr = next((a.get('addr') for a in host.findall('address')
+                 if a.get('addrtype') in {'ipv4', 'ipv6'}), None)
+    if not addr:
+        continue
+    ports = []
+    for port in host.findall('ports/port'):
+        state = port.find('state')
+        if state is not None and state.get('state') == 'open':
+            ports.append(f"{port.get('portid')}/{port.get('protocol')}")
+    if ports:
+        print(f'{addr}: {", ".join(ports)}')
+PY
+
+# Service records as TSV: IP, protocol, port, service, product, version.
+python3 - <<'PY'
 import xml.etree.ElementTree as ET
-tree = ET.parse('/tmp/scan.xml')
-for host in tree.findall('.//host'):
-    addr = host.find('address').get('addr')
-    for port in host.findall('.//port'):
-        state = port.find('state').get('state')
-        if state == 'open':
-            portid = port.get('portid')
-            svc = port.find('service')
-            if svc is not None:
-                name = svc.get('name','')
-                product = svc.get('product','')
-                version = svc.get('version','')
-                print(f'{addr}:{portid} {name} {product} {version}'.strip())
-"
+
+for host in ET.parse('/tmp/scan.xml').findall('host'):
+    addr = next((a.get('addr') for a in host.findall('address')
+                 if a.get('addrtype') in {'ipv4', 'ipv6'}), None)
+    if not addr:
+        continue
+    for port in host.findall('ports/port'):
+        state, svc = port.find('state'), port.find('service')
+        if state is not None and state.get('state') == 'open' and svc is not None:
+            print(addr, port.get('protocol', ''), port.get('portid', ''),
+                  svc.get('name', ''), svc.get('product', ''), svc.get('version', ''), sep='\t')
+PY
 ```
 
 ---
@@ -830,7 +910,7 @@ sudo nmap -D 192.168.1.5,ME,192.168.1.6 ...
 ### Source Port Manipulation
 ```bash
 sudo nmap --source-port 53 ...   # From port 53 (DNS, often trusted)
-sudo nmap -g 80 ...              # Same as above
+sudo nmap -g 80 ...              # Alias for --source-port 80
 ```
 
 ### Timing Evasion
@@ -841,7 +921,7 @@ sudo nmap -T2 --randomize-hosts 192.168.1.0/24 ...     # Random host order
 
 ### Full Evasion Combo
 ```bash
-sudo nmap -sS -T1 -f --mtu 16 -D RND:5 --source-port 53 \
+sudo nmap -sS -T1 --mtu 16 -D RND:5 --source-port 53 \
   --data-length 100 --scan-delay 2s 192.168.1.100
 ```
 
@@ -850,9 +930,11 @@ sudo nmap -sS -T1 -f --mtu 16 -D RND:5 --source-port 53 \
 # Find a zombie host (needs incremental IP ID)
 nmap --script ipidseq 192.168.1.0/24  # Look for "Incremental"
 
-# Scan using zombie — your IP never touches the target
+# Idle scan using a separately authorized intermediary; stealth is not guaranteed
 sudo nmap -sI zombie-ip:80 target-ip
 ```
+
+**Interpretation:** this method infers target responses from changes in the intermediary's IP ID sequence; it depends on a suitable, quiet host and compatible network paths. Authorize both the target and intermediary. Do not claim anonymity: discovery or other enabled scan phases may contact the target directly, and the intermediary/scanner traffic can be observed. Inconsistent IP IDs make the inference unreliable rather than proving a target port state.
 
 ---
 
@@ -864,23 +946,36 @@ nmap --script "broadcast-*" --script-args broadcast.timeout=30
 nmap --script broadcast-upnp-info                       # UPnP/IoT
 nmap --script broadcast-dhcp-discover                   # DHCP info
 nmap --script broadcast-netbios-master-browser          # NetBIOS
-nmap --script dns-service-discovery -p 5353 224.0.0.251 # mDNS/Bonjour
+sudo nmap -e en0 --script broadcast-dns-service-discovery --script-timeout 30s  # mDNS/Bonjour on this LAN
 ```
 
 ### SSL/TLS Deep Inspection
+
+**Use when:** a confirmed TLS service needs certificate, protocol/cipher, or specific vulnerability checks. **Requires:** the correct port/hostname and authorization for active handshake/vulnerability probes. `ssl-enum-ciphers` makes many connections; compare its offered suites with policy rather than interpreting every supported suite as exploitable.
+
 ```bash
 nmap -p 443 --script ssl-cert,ssl-enum-ciphers,ssl-heartbleed,ssl-dh-params 192.168.1.100
-nmap -p 443 --script ssl-cert --script-args ssl-cert.full 192.168.1.100  # Full cert chain
+nmap -p 443 --script ssl-cert -vv 192.168.1.100  # Verbose certificate details and PEM (not a guaranteed full chain)
 ```
 
+**Expected/next:** inspect certificate names, issuer, validity and fingerprint, accepted TLS versions/ciphers, and each vulnerability script's explicit evidence. A valid certificate does not establish application security; confirm hostname/SNI and verify actionable findings independently. An empty script result may be a timeout or unsupported handshake.
+
 ### HTTP Deep Dive
+
+**Use when:** you need candidate paths, server/WAF hints, or matching text from an identified HTTP service. **Requires:** the intended host/vhost and permission for enumeration/crawling. Inspect crawl limits in `nmap --script-help http-grep` and the [HTTP library options](https://nmap.org/nsedoc/lib/http.html).
+
 ```bash
 nmap -p 80 --script http-enum,http-backup-finder,http-waf-detect,http-sitemap-generator 192.168.1.100
 nmap -p 80 --script http-grep --script-args \
-  'http-grep.match=[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}' 192.168.1.100
+  'http-grep.match="[A-Za-z0-9._%+%-]+@[A-Za-z0-9.%-]+%.[A-Za-z]+"' 192.168.1.100
 ```
 
+`http-grep.match` uses **Lua patterns**, not PCRE: use `%.` for a literal dot, and do not use regex quantifiers such as `{2,}` or alternation as if this were grep. The email-like pattern is a discovery hint, not an address validator. Verify matching content and scope before following URLs returned by a crawler.
+
 ### SMB Full Enumeration
+
+**Use when:** a known SMB host needs domain, share, user, service, or session inventory. **Requires:** authorized enumeration and credentials where required; without them, some scripts return partial data or access-denied results. Do not embed real passwords in committed examples or reports; consult script help for authentication arguments supported by the installed version.
+
 ```bash
 nmap -p 445 --script \
   smb-enum-domains,smb-enum-groups,smb-enum-processes,smb-enum-services,\
@@ -889,12 +984,17 @@ nmap -p 445 --script \
   192.168.1.100
 ```
 
+**Expected/next:** correlate domain/OS details, shares, visible accounts, services, and sessions. Distinguish an advertised share from confirmed readable/writable access. Access denied is an authentication/authorization observation, not proof the resource does not exist. Validate surprising permissions with the intended account and report which identity produced each result.
+
 ### Large Network Optimization
+
+**Use when:** the authorized range is too large for an interactive single-host investigation. **Requires:** an explicit range, acceptable scanner/network load, sufficient runtime, and retained per-subnet artifacts. The example below launches local concurrent processes—it is not a distributed scanner. Its fan-out can overwhelm a scanner or network; select concurrency and budgets for the actual environment before running it.
+
 ```bash
 # Phase 1: Parallel host discovery
 sudo nmap -sn -PR --min-hostgroup 256 --min-parallelism 100 10.0.0.0/16 -oG /tmp/hosts.gnmap
 
-# Phase 2: Distributed port scanning per subnet
+# Phase 2: Local concurrent port scans per subnet (review fan-out before running)
 for i in $(seq 0 255); do
   nmap --top-ports 100 -T4 --max-retries 1 10.0.$i.0/24 -oG "/tmp/subnet_$i.gnmap" &
 done
@@ -902,11 +1002,19 @@ wait
 cat /tmp/subnet_*.gnmap > /tmp/all_ports.gnmap
 ```
 
+**Expected/next:** separate files identify which subnet scans produced output. Preserve them and each process's diagnostics; a concatenated grepable file has multiple scan headers and is not a single authoritative completion record. Check for missing/failed jobs before processing hosts with the [per-host loop](#per-host-processing-loop). Discovery on a routed range can miss silent/firewalled hosts.
+
 ### Scan Through Proxies
+
+Nmap's option is `--proxies`. It affects supported **NSE and version-detection connections**, not host discovery, port scanning, or OS detection. The following commands still perform a direct TCP port scan and are **not anonymous scans through Tor**. The local SOCKS4 endpoint must actually support that protocol; HTTP/SOCKS4 support does not imply SOCKS5 or remote DNS support.
+
 ```bash
-nmap --proxy socks4://127.0.0.1:9050 -sT -Pn 192.168.1.100   # SOCKS4 / Tor
-nmap --proxy http://proxy:8080 -sT -Pn 192.168.1.100          # HTTP proxy
+# Direct TCP port scan; supported -sV / NSE connections may use the proxy
+nmap --proxies socks4://127.0.0.1:9050 -sT -Pn -p 80 -sV --script http-title 192.168.1.100
+nmap --proxies http://proxy:8080 -sT -Pn -p 80 -sV --script http-title 192.168.1.100
 ```
+
+**Verify:** compare observed connections with proxy logs; do not infer privacy from the option being accepted. DNS resolution and unsupported connections may bypass the proxy. See the installed version's `--proxies` documentation before relying on it.
 
 ### Custom Packet Crafting
 ```bash
@@ -916,125 +1024,190 @@ sudo nmap --badsum ...                                   # Bad checksums (test I
 ```
 
 ### IPv6 Scanning
+
+**Use when:** the target/network uses IPv6; IPv4 discovery does not inventory IPv6-only addresses. **Requires:** IPv6 connectivity and an explicit interface for link-local/multicast work. Replace `en0` with the local interface and the example address with an authorized peer.
+
 ```bash
-nmap -6 fe80::1                                   # Single IPv6 target
-nmap -6 --top-ports 100 -T4 fe80::1              # Top ports on IPv6 host
-nmap -6 -sn ff02::1                               # Multicast ping — find all IPv6 hosts on LAN
-nmap -6 --script ipv6-node-info fe80::1           # Node info (hostname, addresses)
-nmap --script targets-ipv6-multicast-*            # Discover IPv6 hosts from IPv4 scan
+nmap -6 -e en0 fe80::1                              # Link-local target on the selected interface
+nmap -6 -e en0 --top-ports 100 -T4 fe80::1            # Common TCP ports
+sudo nmap -6 -e en0 --script ipv6-node-info fe80::1   # Node info, if supported by the peer
+
+# Local multicast discovery via a dedicated prerule script, not an ordinary
+# port scan of the multicast address. Does not scan discovered targets here.
+sudo nmap -6 -sL --script targets-ipv6-multicast-echo \
+  --script-args interface=en0
 ```
-Use `-6` whenever the target is an IPv6 address. Most scan types and scripts work identically.
+
+**Expected/next:** multicast responders provide candidate IPv6 addresses; follow up selected authorized addresses with unicast inventory. Silence is not proof of absence. Avoid an IPv4-style exhaustive sweep of a /64; learn addresses from discovery and existing inventory. Scan types and NSE scripts differ in IPv6 support—verify each one instead of assuming parity with IPv4. Inspect other `targets-ipv6-multicast-*` scripts individually before selecting them.
 
 ### Honeypot Detection
+
+There is no bundled `honeypot-detection` script in the checked Nmap 7.99 catalog. Keep this investigation evidence-based rather than depending on an invented script name. Start with ports discovered by the [Single Host Deep Dive](#single-host-deep-dive):
+
 ```bash
-# Dedicated script check
-nmap --script honeypot-detection 192.168.1.100
+# Set PORTS to the confirmed open ports for this authorized host first.
+: "${PORTS:?Set PORTS from the host inventory before probing}"
+nmap -p "$PORTS" -sV --version-all --host-timeout 180s 192.168.1.100
 
-# Real systems have quirks — suspiciously clean responses suggest a honeypot
-nmap -sV --version-all -p- --host-timeout 180s 192.168.1.100
-
-# Honeypots often respond too fast or too consistently — check response timing
-nmap -sV --script banner --script-args banner.timeout=100ms 192.168.1.100
+# Collect banners for comparison; a short timeout can miss slow real services.
+nmap -p "$PORTS" -sV --script banner --script-args banner.timeout=2s \
+  --script-timeout 15s --host-timeout 180s 192.168.1.100
 ```
-Signs of a honeypot: every port returns the same banner, version strings are unusually generic, or response times are implausibly uniform across all services.
+
+**Look for:** identical banners on unrelated ports, protocol behavior inconsistent with the claimed product, and conflicting service/OS evidence. Uniform timing or generic versions alone are weak clues: proxies, load balancers, and real appliances can behave similarly. Record a suspicion with supporting observations, not a definitive honeypot classification. Follow up with a targeted protocol query and compare results over time.
 
 ---
 
 ## Common Workflows
 
-### Quick Network Snapshot (2-3 min for /24)
-```bash
-# Discover hosts
-sudo nmap -sn -PR -PE -PS22,80,443 --max-retries 1 --host-timeout 3s \
-  192.168.1.0/24 -oG /tmp/hosts.gnmap
+### Quick Network Snapshot
 
-# Top 100 ports on all live hosts
-grep "Up" /tmp/hosts.gnmap | awk '{print $2}' | \
-  xargs nmap --top-ports 100 -T4 --host-timeout 30s -oN /tmp/quick-scan.txt
+**Use when:** you need a first inventory of reachable devices and common TCP services. **Requires:** the authorized subnet and raw-packet privileges for the discovery probes below. On a responsive /24 this may take a few minutes; firewall/rate-limit behavior can change that substantially.
+
+```bash
+sudo nmap -sn -PR -PE -PS22,80,443 --max-retries 1 --host-timeout 3s \
+  192.168.1.0/24 -oG /tmp/hosts.gnmap || exit 1
+awk '/Status: Up/ {print $2}' /tmp/hosts.gnmap > /tmp/live-hosts.txt
+
+# -iL avoids xargs splitting a large target list into scans that overwrite one file.
+if [ -s /tmp/live-hosts.txt ]; then
+  nmap --top-ports 100 -T4 --host-timeout 30s \
+    -iL /tmp/live-hosts.txt -oN /tmp/quick-scan.txt -oX /tmp/quick-scan.xml
+else
+  echo 'No discovered hosts; inspect discovery diagnostics before scanning further'
+fi
 ```
+
+**Expected:** `/tmp/live-hosts.txt` lists discovered IPs; the normal/XML reports contain common-port states for scanned hosts. This is not an all-port inventory. A host absent from discovery may still be online, and a timed-out host may have no port table.
+
+**Next:** choose a host for the [Single Host Deep Dive](#single-host-deep-dive). If a known machine is missing, consult [When `-Pn` Is Needed](#when--pn-is-needed) and test that host explicitly rather than assuming the whole subnet is empty.
 
 ### Single Host Deep Dive
+
+**Use when:** one host deserves a full TCP port inventory plus deeper identification. **Requires:** an authorized host, raw-packet privileges for SYN/OS scans, reviewed default scripts for `-sC`, and vulners/API access for CVE lookup. The rate setting is suitable only when the network can tolerate it; packet loss and the host timeout can make the inventory incomplete.
+
 ```bash
-# All ports
-sudo nmap -p- -T4 --min-rate 1000 --host-timeout 120s 192.168.1.100 -oG /tmp/allports.gnmap
+HOST=192.168.1.100
+sudo nmap -p- -T4 --min-rate 1000 --host-timeout 120s \
+  "$HOST" -oG /tmp/allports.gnmap || exit 1
 
-# Get open ports
-PORTS=$(grep "^Host: 192.168.1.100 " /tmp/allports.gnmap \
-  | grep -oP '\d+/open' | cut -d'/' -f1 | tr '\n' ',' | sed 's/,$//')
+PORTS=$(awk -v host="$HOST" '$1 == "Host:" && $2 == host' /tmp/allports.gnmap \
+  | grep -oE '[0-9]+/open/tcp' | cut -d/ -f1 | paste -sd, -)
+[ -n "$PORTS" ] || { echo 'No confirmed open TCP ports; inspect the inventory before continuing'; exit 0; }
 
-# Service detection
-nmap -p $PORTS -sV -sC -T4 --host-timeout 90s 192.168.1.100 -oX /tmp/services.xml
+nmap -p "$PORTS" -sV -sC --script-timeout 30s -T4 --host-timeout 90s \
+  "$HOST" -oX /tmp/services.xml
+nmap -p "$PORTS" -sV --script vulners --script-args mincvss=5.0 \
+  --script-timeout 30s -T4 --host-timeout 120s "$HOST" -oX /tmp/cves.xml
 
-# CVE lookup
-nmap -p $PORTS -sV --script vulners --script-args mincvss=5.0 \
-  -T4 --host-timeout 120s 192.168.1.100 -oX /tmp/cves.xml
-
-# OS detection
-sudo nmap -p $PORTS -O --osscan-guess 192.168.1.100 -oN /tmp/os.txt
+# Let OS detection find both open and closed ports rather than restricting it to PORTS.
+sudo nmap -O --osscan-guess --max-os-tries 1 --host-timeout 90s \
+  "$HOST" -oN /tmp/os.txt
 ```
+
+**Expected:** discovered TCP ports in `allports.gnmap`, per-port products/versions and default-script evidence in `services.xml`, candidate matches in `cves.xml`, and an OS estimate in `os.txt`. Keep diagnostics and note failed or timed-out phases.
+
+**Next:** use protocol-specific scripts for uncertain products, and verify vendor/package applicability for CVEs. Treat `tcpwrapped`, generic service names, and speculative OS matches as unresolved evidence. Add the targeted [UDP workflow](#udp-network-sweep) if UDP coverage is needed; a TCP deep dive says nothing about UDP.
 
 ### Web Server Assessment
+
+**Use when:** inventory found HTTP/TLS services and you need application hints, headers, certificate/cipher details, and candidate CVEs. **Requires:** reviewed web/NSE probes, vulners external access, and the intended hostname if the server uses virtual hosting. Enumeration and cipher testing generate multiple requests; they are not passive inspection.
+
 ```bash
 nmap -p 80,443,8080,8443 -sV \
-  --script http-enum,http-methods,http-headers,http-title,http-waf-detect,\
-  ssl-cert,ssl-enum-ciphers,vulners \
-  --script-args mincvss=5.0 \
-  -T4 --host-timeout 120s 192.168.1.100
+  --script http-enum,http-methods,http-headers,http-title,http-waf-detect,ssl-cert,ssl-enum-ciphers,vulners \
+  --script-args mincvss=5.0 --script-timeout 30s \
+  -T4 --host-timeout 120s 192.168.1.100 -oA /tmp/web-assessment
 ```
+
+**Expected:** page titles and headers identify the served application; `http-enum` may list candidate paths; TLS scripts show certificate attributes and accepted protocols/ciphers; vulners may add version matches. A returned method/path or inferred WAF is not by itself a vulnerability.
+
+**Next:** investigate relevant paths and unexpected TLS settings with a protocol-specific client. If an IP returns a default site or unexpected certificate, verify the intended HTTP Host/TLS SNI before interpreting it. For supported scripts, `--script-args 'http.host=app.example.com,tls.servername=app.example.com,mincvss=5.0'` supplies those names; verify with each script's help. A missing result can be a timeout, unsupported probe, or routing mismatch rather than proof of absence.
 
 ### Network Baseline (Save + Diff)
+
+**Use when:** you want evidence of new/removed hosts, changed port states, or changed service versions between observations. **Requires:** `ndiff`, retained scan files, and matching target/port coverage, privileges, discovery options, and scanner vantage point. Choose separate observation filenames; do not overwrite the baseline when collecting current results.
+
 ```bash
-# Save baseline — port-level only, no service detection (fast, safe on subnets)
-nmap --top-ports 1000 -T4 --open --host-timeout 20s \
+# At the baseline observation: preserve all reported states, not just --open.
+nmap --top-ports 1000 -T4 --host-timeout 20s \
   192.168.1.0/24 -oX /tmp/baseline.xml
 
-# Later: current state
-nmap --top-ports 1000 -T4 --open --host-timeout 20s \
+# At a later observation: same scope/options, distinct output.
+nmap --top-ports 1000 -T4 --host-timeout 20s \
   192.168.1.0/24 -oX /tmp/current.xml
 
-# Diff — shows new hosts, new ports, removed hosts, closed ports
-ndiff /tmp/baseline.xml /tmp/current.xml | grep "^[+-]"
+ndiff /tmp/baseline.xml /tmp/current.xml
+# Status 0 = unchanged, 1 = differences, 2 = error.
 ```
 
-For a service-level baseline, run per-host after discovery:
+**Expected:** `+` and `-` records for changes, with surrounding host/port context in the full report. No differences means no observed differences in this scan's coverage, not proof that the entire network is unchanged.
+
+For service-level comparison, run matched per-host snapshots after inventory. Keep the same explicit `PORTS` set at both observations; deriving only currently open ports would hide some state changes:
+
 ```bash
-# Per-host service snapshot (add to baseline after port scan)
-nmap -p "$PORTS" -sV -T4 --host-timeout 60s --open \
-  192.168.1.X -oX /tmp/baseline-192.168.1.X.xml
+HOST=192.168.1.100
+PORTS=22,80,443       # use the relevant inventory set; hold it constant for this comparison
+nmap -p "$PORTS" -sV -T4 --host-timeout 60s "$HOST" -oX "/tmp/baseline-$HOST.xml"
+# Later, repeat the same command with -oX "/tmp/current-$HOST.xml", then ndiff those files.
 ```
+
+**Next:** verify significant changes with a targeted rescan and check scan diagnostics for timeouts or missing discovery results. A disappeared host may be asleep or filtered; a changed version banner may reflect a proxy or probe difference. Confirm the observation before treating it as a device/service removal or patch event.
 
 ### IoT / Smart Home Survey
+
+**Use when:** you need to identify services advertised by local devices and correlate them with reachable ports. **Requires:** an authorized local Layer-2 network, a known interface for broadcasts, and device tolerance for service probes. Broadcast discovery reaches nearby devices beyond a single IP target; confirm that scope. Nmap normally excludes printer port 9100 from version probing to avoid printing probe data—do not casually override that protection with `--allports`.
+
 ```bash
-# Discover IoT devices
-sudo nmap -sn -PR 192.168.1.0/24 -oG /tmp/hosts.gnmap
-# Find UPnP / Bonjour / mDNS devices
-nmap --script "broadcast-upnp-info,broadcast-dns-service-discovery"
-# Scan common IoT ports
-nmap -p 23,80,443,554,1883,5683,8080,8443,9100 -sV --host-timeout 60s \
-  -iL /tmp/live-hosts.txt -oN /tmp/iot-scan.txt
+sudo nmap -sn -PR --host-timeout 10s 192.168.1.0/24 \
+  -oN /tmp/iot-discovery.txt -oG /tmp/hosts.gnmap || exit 1
+awk '/Status: Up/ {print $2}' /tmp/hosts.gnmap > /tmp/live-hosts.txt
+
+# Replace en0 with the authorized LAN interface; Linux names often differ.
+sudo nmap -e en0 --script 'broadcast-upnp-info,broadcast-dns-service-discovery' \
+  --script-timeout 30s -oN /tmp/iot-advertisements.txt
+
+# Common TCP IoT ports; scan only when discovery supplied targets.
+if [ -s /tmp/live-hosts.txt ]; then
+  nmap -p 23,80,443,554,1883,5683,8080,8443,9100 -sV --host-timeout 60s \
+    -iL /tmp/live-hosts.txt -oN /tmp/iot-scan.txt
+fi
 ```
 
+**Expected:** local discovery gives IP/MAC/vendor hints; broadcast output may supply device names, types, and service URLs; the TCP scan identifies reachable services. UDP discovery is separate—TCP port 5683 alone does not cover the usual UDP CoAP service. Advertised addresses/ports may be stale or unreachable from the scanning segment.
+
+**Next:** correlate IP, MAC, hostname, advertised type, and actual service evidence rather than treating the vendor OUI as a device model. Follow up relevant UDP services with the [UDP sweep](#udp-network-sweep) and targeted service scripts. Missing broadcasts can reflect VLAN isolation, the wrong interface, disabled discovery, or timeouts.
+
 ### UDP Network Sweep
+
+**Use when:** you need UDP coverage for DNS, DHCP, NTP, SNMP, UPnP, or mDNS after TCP inventory. **Requires:** authorized targets, raw-packet privileges, and permission for subsequent service queries. This is an active sweep. The selected-port list bounds scope, not total wall time.
+
 ```bash
 # Step 1: Discover live hosts first (reuse from TCP sweep if already done)
 sudo nmap -sn -PR -PE -PS22,80,443 --max-retries 1 --host-timeout 5s \
-  192.168.1.0/24 -oG /tmp/hosts.gnmap
-grep "Up" /tmp/hosts.gnmap | awk '{print $2}' > /tmp/live-hosts.txt
+  192.168.1.0/24 -oG /tmp/hosts.gnmap || exit 1
+awk '/Status: Up/ {print $2}' /tmp/hosts.gnmap > /tmp/live-hosts.txt
+[ -s /tmp/live-hosts.txt ] || { echo 'No discovered targets; inspect discovery first'; exit 0; }
 
-# Step 2: Targeted UDP scan across all live hosts — high-value ports only (≤120s/host)
+# Step 2: Targeted UDP scan across all live hosts — 120s host budget, not total runtime
 # Never run a broad UDP scan on a subnet — do it per-host or with tight port targeting
 sudo nmap -sU -p 53,67,69,111,123,137,161,500,1900,5353 \
   --max-retries 1 -T4 --host-timeout 120s \
   -iL /tmp/live-hosts.txt -oX /tmp/udp-sweep.xml
 
-# Step 3: For hosts with SNMP open, enumerate device info
+# Step 3: Select a host with SNMP evidence from the UDP report.
+HOST=192.168.1.100
 sudo nmap -sU -p 161 --script snmp-info,snmp-interfaces,snmp-sysdescr \
-  --host-timeout 60s 192.168.1.X -oX /tmp/snmp-192.168.1.X.xml
+  --script-timeout 30s --host-timeout 60s "$HOST" -oX "/tmp/snmp-$HOST.xml"
 
-# Step 4: mDNS sweep — reveals device names and services passively
+# Step 4: mDNS sweep — actively queries device names and advertised services
 sudo nmap -sU -p 5353 --script dns-service-discovery \
-  --host-timeout 30s -iL /tmp/live-hosts.txt -oN /tmp/mdns-sweep.txt
+  --script-timeout 20s --host-timeout 30s -iL /tmp/live-hosts.txt -oN /tmp/mdns-sweep.txt
 ```
+
+**Expected:** UDP port states in `udp-sweep.xml`; responding SNMP or mDNS scripts can add model/interface information or advertised service names. `open|filtered` is ambiguous, not confirmed open. An empty SNMP result may mean the community/auth settings are wrong rather than no SNMP service; do not silently switch to credential guessing.
+
+**Next:** query an ambiguous port with a reviewed, service-specific probe and compare with the device's configuration. DHCP is often broadcast-based and does not behave like an ordinary per-host UDP request. mDNS visibility is link-local; a unicast sweep is not a complete cross-VLAN service inventory. Record host/script timeouts and retry only unresolved hosts as needed.
 
 **What each port reveals on a home network:**
 | Port | Service | What you get |
@@ -1057,11 +1230,11 @@ sudo nmap -sU -p 5353 --script dns-service-discovery \
 |-------|---------|------------|
 | `open` | A service is actively accepting connections on this port | Investigate — run service detection and CVE lookup |
 | `closed` | Port is reachable but no service is listening | Note it, not interesting unless tracking changes |
-| `filtered` | Firewall is dropping/blocking packets — nmap can't tell if open or closed | May be worth probing with `-Pn`, source port tricks, or ACK scan to map the firewall |
-| `open\|filtered` | Can't determine — common with UDP or FIN/NULL/Xmas scans | Try TCP connect scan or different probe to confirm |
+| `filtered` | Probes/responses were blocked or lost; open/closed is unknown | Investigate filtering or packet loss with scoped probes; `-Pn` bypasses discovery, not a port firewall |
+| `open\|filtered` | Can't determine — common with UDP or FIN/NULL/Xmas scans | Use a service-specific UDP probe for UDP, or a TCP SYN/connect scan for ambiguous TCP results |
 | `unfiltered` | Reachable but state unknown — seen with ACK scans | Run a SYN scan to confirm open/closed |
 
-**Key distinction**: `filtered` does not mean the service doesn't exist. A firewall is actively blocking the probe. Many real services hide behind `filtered` ports. If a host looks unresponsive but you have reason to believe it's up, use `-Pn` to skip host discovery and scan anyway.
+**Key distinction**: `filtered` does not mean the service doesn't exist. Filtering or packet loss can prevent a conclusive response. Many real services can be behind `filtered` ports. If a host looks unresponsive but you have reason to believe it's up, use `-Pn` to skip host discovery and scan anyway.
 
 ### When `-Pn` Is Needed
 
@@ -1107,7 +1280,7 @@ nmap -p $PORT --script banner 192.168.1.100
 ```
 
 - First column after CVE ID is the CVSS score: 9.0+ critical, 7.0-8.9 high, 4.0-6.9 medium
-- No vulners output on a port = either no version was detected or no known CVEs at that version
+- No vulners output can mean missing versions, no matches, a score filter, an API failure, or a script timeout; it is not a clean bill of health
 - If you see no results on any port: confirm `-sV` is returning version strings before assuming the host is clean
 
 ---
@@ -1147,6 +1320,8 @@ sudo nmap -sF ...             # FIN scan to bypass simple firewalls
 
 ## Quick Reference
 
+These are invocation reminders, not standalone evidence of a complete assessment. Set a nonempty `PORTS` list before using it; see the corresponding workflow for prerequisites, diagnostics, and interpretation.
+
 | Goal | Command |
 |------|---------|
 | Find live hosts | `sudo nmap -sn -PR 192.168.1.0/24 --max-retries 1` |
@@ -1164,6 +1339,6 @@ sudo nmap -sF ...             # FIN scan to bypass simple firewalls
 | IDS evasion | `sudo nmap -sS -T1 -f -D RND:5 --source-port 53 192.168.1.100` |
 | Zombie scan | `sudo nmap -sI zombie:80 192.168.1.100` |
 | Baseline diff | `ndiff /tmp/baseline.xml /tmp/current.xml` |
-| Through Tor | `nmap --proxy socks4://127.0.0.1:9050 -sT -Pn 192.168.1.100` |
-| SMB full enum | `nmap -p 445 --script smb-enum-*,smb-vuln-* 192.168.1.100` |
+| Proxy-supported version/NSE connections (port scan remains direct) | `nmap --proxies socks4://127.0.0.1:9050 -sT -Pn -p 80 -sV --script http-title 192.168.1.100` |
+| SMB full enum | `nmap -p 445 --script "smb-enum-*,smb-vuln-*" 192.168.1.100` |
 | IoT/SCADA | `nmap -p 102,502,47808 --script "*-info,modbus-*" 192.168.1.100` |
