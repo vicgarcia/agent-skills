@@ -129,11 +129,10 @@ atq
 
 ### Shell Selection
 
-At scheduling time, `at` captures the `$SHELL` environment variable. If unset, it falls back to the user's login shell from `/etc/passwd`. The job runs through that shell.
+Jobs run through `/bin/sh` on common Linux and macOS implementations, not `$SHELL`. Write submitted commands in POSIX shell, or invoke the interpreter a script needs explicitly:
 
 ```bash
-# Check what shell at will use
-echo $SHELL
+echo "/bin/bash /path/to/bash-script.sh" | at now + 1 hour
 ```
 
 ### Environment Capture
@@ -141,7 +140,6 @@ echo $SHELL
 When you schedule a job, `at` captures:
 - Current working directory
 - All environment variables
-- The shell
 
 View exactly what was captured:
 
@@ -223,9 +221,15 @@ fi
 
 ### Check if Job Exists Before Scheduling
 
+`atq` lists only IDs, times, queues, and owners — never the command — so search each job's script with `at -c`:
+
 ```bash
 # Avoid duplicate scheduling
-if ! atq | grep -q "pattern"; then
+found=""
+for id in $(atq | awk '{print $1}'); do
+    at -c "$id" | grep -q "pattern" && found="$id" && break
+done
+if [ -z "$found" ]; then
     echo "command" | at 9:00 AM
 fi
 ```
@@ -269,3 +273,5 @@ Start if needed:
 ```bash
 atd
 ```
+
+On macOS there is no `atd` process: launchd's `atrun` job runs queued work, and it is disabled by default. Jobs queue but never run until it is enabled (see `man atrun`).
