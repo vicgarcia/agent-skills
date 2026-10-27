@@ -84,7 +84,10 @@ Updated stuff.
 
 ## AGENTS.md
 
-**Always `AGENTS.md`, never `CLAUDE.md`.** Every agent harness in use, Claude Code included, reads the [AGENTS.md](https://agents.md) standard.
+**Always `AGENTS.md`, never `CLAUDE.md`.** pi and other harnesses read the [AGENTS.md](https://agents.md) standard, and so does [Claude Code](https://code.claude.com/docs/en/memory#agents-md) from **v2.1.277**, with no import or setting. Two catches with Claude Code:
+
+- **Any `CLAUDE.md`, `.claude/CLAUDE.md`, or `CLAUDE.local.md` in the working directory or above it switches AGENTS.md off.** Claude Code then reads only the CLAUDE.md files. That's why a migration must not leave a stub behind. Your own `~/.claude/CLAUDE.md` doesn't count.
+- **Older versions read only CLAUDE.md.** Check with `claude --version` and upgrade rather than adding a CLAUDE.md.
 
 - **New project:** create `AGENTS.md` at the repo root.
 - **Existing `CLAUDE.md`:** migrate it.

@@ -21,7 +21,7 @@ With the skill installed, ask the agent to "write an AGENTS.md for this project"
 
 ## Requirements
 
-None. Applying the standards assumes the usual toolchains: [uv](https://docs.astral.sh/uv/) for Python, [Go](https://go.dev/dl/), and Node/npm for TypeScript.
+None. Applying the standards assumes the usual toolchains: [uv](https://docs.astral.sh/uv/) for Python, [Go](https://go.dev/dl/), and Node/npm for TypeScript. Claude Code reads `AGENTS.md` from v2.1.277, and only when no `CLAUDE.md` exists in or above the project.
 
 ## Install
 
