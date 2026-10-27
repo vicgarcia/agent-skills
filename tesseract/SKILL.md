@@ -152,8 +152,8 @@ prev=""; for f in "$slides"/s_*.png; do
   [ -f "$f" ] || continue
   if [ -n "$prev" ]; then
     metric=$(magick compare -metric RMSE "$prev" "$f" null: 2>&1)
-    status=$?
-    [ "$status" -le 1 ] || { printf '%s\n' "$metric" >&2; exit "$status"; }
+    rc=$?
+    [ "$rc" -le 1 ] || { printf '%s\n' "$metric" >&2; exit "$rc"; }
     d=$(printf '%s\n' "$metric" | sed -nE 's/.*\(([0-9.eE+-]+)\).*/\1/p')
     [ -n "$d" ] || { echo 'Could not parse comparison metric' >&2; exit 1; }
     awk -v d="$d" 'BEGIN{exit !(d < 0.02)}' && { rm "$f"; continue; }
