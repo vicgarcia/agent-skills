@@ -134,29 +134,32 @@ ffmpeg -y -nostdin -i input.mp4 -c:v h264_nvenc -preset p5 -cq 23 -c:a copy outp
 # Single-pass average bitrate
 ffmpeg -y -nostdin -i input.mp4 -c:v libx264 -b:v 2M -maxrate 2.5M -bufsize 4M -c:a aac -b:a 128k output.mp4
 
-# Two-pass (accurate size targeting)
-ffmpeg -y -nostdin -i input.mp4 -c:v libx264 -b:v 2M -preset medium -pass 1 -an -f null -
-ffmpeg -y -nostdin -i input.mp4 -c:v libx264 -b:v 2M -preset medium -pass 2 -c:a aac -b:a 128k output.mp4
+# Two-pass (accurate size targeting; isolated pass logs)
+passdir=$(mktemp -d "${TMPDIR:-/tmp}/ffmpeg-pass.XXXXXX")
+ffmpeg -y -nostdin -i input.mp4 -c:v libx264 -b:v 2M -preset medium -pass 1 -passlogfile "$passdir/encode" -an -f null - &&
+ffmpeg -y -nostdin -i input.mp4 -c:v libx264 -b:v 2M -preset medium -pass 2 -passlogfile "$passdir/encode" -c:a aac -b:a 128k output.mp4
 ```
 
-Video bitrate for a size target: `video_kbps = target_MB * 8192 / duration_s - audio_kbps`. Two-pass leaves `ffmpeg2pass-0.log*` files in the working directory; delete them afterward.
+Video bitrate for a decimal MB target: `video_kbps = target_MB * 8000 / duration_s - audio_kbps` (use `8388.608` instead of `8000` for MiB with decimal kb/s). The default pass-log prefix is `ffmpeg2pass`; use a unique `-passlogfile` prefix for concurrent jobs. Remove only this job's pass directory after verifying the output.
 
 #### Worked recipe: shrink a video to fit a size limit (e.g. an upload cap)
 
 ```bash
 in=in.mp4; target_mb=25; audio_kbps=96
 dur=$(ffprobe -v error -of csv=p=0 -show_entries format=duration "$in")
-vk=$(awk -v t="$target_mb" -v d="$dur" -v a="$audio_kbps" 'BEGIN{printf "%d", (t*8192/d - a)*0.97}')
+vk=$(awk -v t="$target_mb" -v d="$dur" -v a="$audio_kbps" 'BEGIN{if (d<=0) exit 1; printf "%d", (t*8000/d - a)*0.97}') || exit 1
+[ "$vk" -gt 0 ] || { echo 'Size budget is too small for this duration/audio bitrate' >&2; exit 1; }
 echo "video bitrate: ${vk}k"    # if under ~500k at 1080p, also downscale (scale=-2:720 or 480)
 
-ffmpeg -y -nostdin -i "$in" -vf "scale='min(1280,iw)':-2" -c:v libx264 -preset medium -b:v ${vk}k -pass 1 -an -f null -
-ffmpeg -y -nostdin -i "$in" -vf "scale='min(1280,iw)':-2" -c:v libx264 -preset medium -b:v ${vk}k -pass 2 \
+passdir=$(mktemp -d "${TMPDIR:-/tmp}/ffmpeg-pass.XXXXXX")
+ffmpeg -y -nostdin -i "$in" -vf "scale='min(1280,iw)':-2" -c:v libx264 -preset medium -b:v ${vk}k -pass 1 -passlogfile "$passdir/encode" -an -f null - &&
+ffmpeg -y -nostdin -i "$in" -vf "scale='min(1280,iw)':-2" -c:v libx264 -preset medium -b:v ${vk}k -pass 2 -passlogfile "$passdir/encode" \
   -pix_fmt yuv420p -c:a aac -b:a ${audio_kbps}k -movflags +faststart out.mp4
-rm -f ffmpeg2pass-0.log*
+# Inspect errors and verify bytes/duration before removing this job's passdir.
 ls -l out.mp4
 ```
 
-The `0.97` factor leaves headroom for container overhead. Tested on a 20 s 720p clip with a 1 MB target: 12.4 MB in, 1.02 MB out (97% of the limit, under it), duration unchanged. If the result still lands over the limit, lower `target_mb` slightly and rerun, or drop the resolution. For long inputs, run both passes in the background (see Long-Running Jobs).
+The `0.97` factor leaves approximate headroom for container overhead, not a hard guarantee. Check the actual byte count against the upload service's limit (decimal MB and binary MiB differ). If the result exceeds it, lower the bitrate and rerun, or drop the resolution. For long inputs, run both passes in the background (see Long-Running Jobs).
 
 ---
 
@@ -233,7 +236,7 @@ ffmpeg -y -nostdin -i in.mp4 -vf "scale='min(1920,iw)':-2" -c:v libx264 -crf 23 
 ffmpeg -y -nostdin -i in.mp4 -vf scale=iw/2:-2 -c:v libx264 -crf 23 out.mp4               # half size
 ```
 
-`-2` computes the dimension from the aspect ratio and rounds it to an even number (H.264/H.265 require this). Use `-2`, never `-1`. Add `:flags=lanczos` for sharper downscales.
+`-2` computes the dimension from the aspect ratio and rounds it to an even number, useful for common 4:2:0 H.264/H.265 output. `-1` preserves aspect without enforcing even dimensions and is fine for formats that permit them. The explicitly supplied dimension must also meet the encoder's constraints. Add `:flags=lanczos` for sharper downscales.
 
 ### Fit inside a box with letterbox/pillarbox bars
 
@@ -450,10 +453,10 @@ Normalize every input to the same size, frame rate, and SAR first, or the filter
 
 ```bash
 ffmpeg -y -nostdin -i a.mp4 -i b.mov -filter_complex "
-  [0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v0];
-  [1:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v1];
-  [0:a]aformat=sample_rates=48000:channel_layouts=stereo[a0];
-  [1:a]aformat=sample_rates=48000:channel_layouts=stereo[a1];
+  [0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,setpts=PTS-STARTPTS[v0];
+  [1:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,setpts=PTS-STARTPTS[v1];
+  [0:a]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS[a0];
+  [1:a]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS[a1];
   [v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]" \
   -map "[v]" -map "[a]" -c:v libx264 -crf 23 -pix_fmt yuv420p -c:a aac joined.mp4
 ```
@@ -640,7 +643,7 @@ ffmpeg -y -nostdin -hide_banner -loglevel error \
   2> ffmpeg.log
 ```
 
-Launch with the Bash tool's `run_in_background: true`. You are notified when it exits, so you don't poll in a sleep loop. `-progress` rewrites key=value blocks every `-stats_period` seconds (`frame=`, `fps=`, `out_time=`, `speed=`, `progress=continue`/`end`). A `speed` below `1x` means the job takes longer than the video's duration.
+Use the active harness's documented background facility if it has one; do not assume a `run_in_background` parameter exists. Otherwise use a bounded synchronous command or an explicitly managed shell process, retaining its PID, logs, and exit status. `-progress` appends key=value blocks every `-stats_period` seconds (`frame=`, `fps=`, `out_time=`, `speed=`, `progress=continue`/`end`). A `speed` below `1x` means the job takes longer than the video's duration.
 
 ### Check progress on demand
 
@@ -651,7 +654,7 @@ spd=$(grep speed= progress.txt | tail -1 | cut -d= -f2 | tr -d 'x ')
 awk -v d="$dur" -v u="$us" -v s="$spd" 'BEGIN{done=u/1e6; printf "%.1f%% done, ~%.0fs remaining\n", 100*done/d, (s>0)?(d-done)/s:0}'
 ```
 
-After the job: check the exit status and `ffmpeg.log` (a non-empty log at `-loglevel error` means trouble), confirm the output duration matches the input, and delete `progress.txt`, `ffmpeg.log`, and any `ffmpeg2pass-0.log*`.
+After the job: check the exit status and error log, then confirm the output's expected duration and streams (edits may intentionally change them). Use a task-specific directory or unique `-passlogfile` prefix for two-pass logs; clean up only files from this job, not a shared `ffmpeg2pass-0.log*` glob.
 
 ---
 
@@ -669,7 +672,7 @@ for f in *.mov; do
 done
 ```
 
-For long batches, run the whole loop with `run_in_background: true` and append a line per finished file to a log so progress is visible with `wc -l`. x264/x265 already use every core, so parallel transcodes rarely help; parallelism does help many small light jobs (thumbnails, remuxes) via `xargs -P`.
+For long batches, use the available harness background facility and append a line per finished file to a log so progress is visible with `wc -l`. A file's existence alone does not prove it finished: write to a temporary output retaining the correct media extension, verify it, then rename to the final destination. x264/x265 already use every core, so parallel transcodes rarely help; parallelism does help many small light jobs (thumbnails, remuxes) via `xargs -P`.
 
 ---
 
@@ -734,9 +737,9 @@ Writing an intermediate file at each stage means a mistake in one step doesn't f
 2. **Probe first.** Duration decides whether to background the job; the codec decides whether `-c copy` is possible.
 3. **Prefer `-c copy`** for container changes and keyframe-tolerant trims. Transcode only when you must change codec, bitrate, resolution, or apply a filter.
 4. **Add `-pix_fmt yuv420p` and `-movflags +faststart`** to H.264/H.265 MP4 meant for sharing or the web.
-5. **Use `-2`, never `-1`, for computed dimensions** (`scale=1280:-2`): H.264/H.265 need even sizes.
+5. **Prefer `-2` for computed dimensions** with 4:2:0 H.264/H.265 (`scale=1280:-2`); ensure both final dimensions meet encoder constraints.
 6. **Don't combine `-c copy` with `-vf`/`-af`/`-filter_complex`** on the same stream. Filters require decoding.
-7. **Background anything over ~60 s** with `-progress FILE` and `run_in_background: true`; never block on a long transcode hoping it beats the timeout, and don't poll with sleep loops.
+7. **Plan for long jobs** with `-progress FILE` and the harness's supported timeout/background controls. Retain logs and exit status; do not invent tool parameters.
 8. **Check build support** (`ffmpeg -encoders`, `-filters`, `-muxers`) rather than assuming `libx265`, `libsvtav1`, or `libass` exist.
 9. **Verify every output** with ffprobe (duration, streams) after the job, and view a frame for visual changes.
 10. **Create output directories first** and bound frame extraction with `-t`, `fps=1/N`, or `-frames:v N` so an unbounded `%04d.png` doesn't write hundreds of thousands of files.
