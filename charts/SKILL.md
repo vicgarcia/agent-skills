@@ -86,16 +86,16 @@ echo '{"xAxis":{"type":"category","data":["A","B","C"]},"yAxis":{"type":"value"}
 
 ## Design Standards
 
-Apply these standards to every chart for consistent, professional output.
+These are defaults, not requirements that override the user's theme or the data's meaning. Use a zero baseline for bars; label units and any deliberate axis truncation. Avoid smoothing when it implies unobserved values or hides discontinuities. Keep essential information visible in static output.
 
 ### Background
 
-Always set at the top level:
+For an opaque light-background chart, set at the top level:
 ```json
 "backgroundColor": "#ffffff"
 ```
 
-Required for PNG readability — PNGs without it render as transparent in most viewers. Omit only when using `--theme dark` (the theme sets its own background).
+Without an explicit/theme background, PNG may be transparent. Use white as a general default, omit it with `--theme dark`, or preserve transparency when requested.
 
 ### Color palette
 
@@ -104,11 +104,11 @@ Six-color standard sequence. Apply in order; cycle for more than 6 series.
 | Index | Name | Hex |
 |-------|------|-----|
 | 0 | Indigo | `#5470c6` |
-| 1 | Teal | `#91cc75` |
+| 1 | Green | `#91cc75` |
 | 2 | Amber | `#fac858` |
 | 3 | Red | `#ee6666` |
-| 4 | Violet | `#73c0de` |
-| 5 | Cyan | `#3ba272` |
+| 4 | Light blue | `#73c0de` |
+| 5 | Teal | `#3ba272` |
 
 Set at the top level of every config:
 ```json
@@ -127,7 +127,7 @@ Set at the top level of every config:
 
 ### Tooltip
 
-Always include. Use `"trigger": "axis"` for axis-based charts, `"trigger": "item"` for pie/funnel/gauge/treemap.
+Tooltips are optional in static SVG/PNG output: they are not interactive there. For configs also used in a browser, use `"trigger": "axis"` for axis-based charts and `"trigger": "item"` for pie/funnel/treemap. Put essential values and units in visible labels, not only tooltips.
 
 ```json
 "tooltip": { "trigger": "axis" }
@@ -159,7 +159,7 @@ Standard axis style for clean, minimal look:
 
 ### Grid padding
 
-Always use `containLabel: true` to prevent axis labels from being clipped:
+For Cartesian charts, use `containLabel: true` to reduce clipped axis labels (not applicable to pie, gauge, radar, treemap, or sankey):
 ```json
 "grid": { "left": "5%", "right": "5%", "bottom": "10%", "containLabel": true }
 ```
@@ -417,7 +417,7 @@ Best for: correlation between two variables, distribution shape, outlier detecti
 }
 ```
 
-**Variable bubble size:** Set `"symbolSize"` to a function or encode size as the third value in each point using `"encode": { "x": 0, "y": 1, "symbolSize": 2 }`.
+**Variable bubble size:** JSON cannot contain callback functions. Store size as the third dimension and use a `visualMap` component, for example `"visualMap": { "show": false, "dimension": 2, "min": 0, "max": 100, "inRange": { "symbolSize": [5, 40] } }`. Set its range from the actual data; `encode.symbolSize` is not a supported substitute.
 
 ---
 
@@ -667,10 +667,7 @@ Best for: statistical distribution, quartile analysis, spread comparison across 
   "backgroundColor": "#ffffff",
   "color": ["#5470c6"],
   "title": { "text": "Response Time Distribution by Endpoint", "left": "center", "textStyle": { "fontSize": 16, "fontWeight": "bold" } },
-  "tooltip": {
-    "trigger": "item",
-    "formatter": "Min: {c0}<br>Q1: {c1}<br>Median: {c2}<br>Q3: {c3}<br>Max: {c4}"
-  },
+  "tooltip": { "trigger": "item" },
   "grid": { "left": "10%", "right": "10%", "bottom": "10%", "containLabel": true },
   "xAxis": {
     "type": "category",
@@ -709,10 +706,7 @@ Best for: OHLC financial timeseries — stock prices, crypto, any asset with ope
 {
   "backgroundColor": "#ffffff",
   "title": { "text": "AAPL – Daily OHLC", "left": "center", "textStyle": { "fontSize": 16, "fontWeight": "bold" } },
-  "tooltip": {
-    "trigger": "axis",
-    "formatter": "Open: {c0}<br>Close: {c1}<br>Low: {c2}<br>High: {c3}"
-  },
+  "tooltip": { "trigger": "axis" },
   "grid": { "left": "10%", "right": "5%", "bottom": "10%", "containLabel": true },
   "xAxis": {
     "type": "category",
@@ -870,14 +864,19 @@ values     = [r["sales"]  for r in records]
 
 ### Multi-series from records
 ```python
-months   = sorted(set(r["month"]   for r in records))
+# records must already be in chronological order; preserve category order
+months   = list(dict.fromkeys(r["month"] for r in records))
 products = sorted(set(r["product"] for r in records))
+totals = {}
+for record in records:
+    key = (record["month"], record["product"])
+    totals[key] = totals.get(key, 0) + record["sales"]
 
 series = [
     {
         "name": product,
         "type": "bar",
-        "data": [next((r["sales"] for r in records if r["month"] == m and r["product"] == product), 0) for m in months]
+        "data": [totals.get((month, product)) for month in months],
     }
     for product in products
 ]
@@ -904,11 +903,13 @@ import statistics
 
 def boxplot_row(samples):
     s = sorted(samples)
-    n = len(s)
-    q1 = s[n // 4]
-    q2 = s[n // 2]
-    q3 = s[3 * n // 4]
-    return [min(s), q1, q2, q3, max(s)]
+    if len(s) < 2:
+        raise ValueError("boxplot needs at least two samples")
+    q1, _, q3 = statistics.quantiles(s, n=4, method="inclusive")
+    return [s[0], q1, statistics.median(s), q3, s[-1]]
+
+# This uses min/max whiskers and inclusive quartiles. For Tukey boxplots,
+# compute whiskers within 1.5 * IQR and plot outliers separately.
 ```
 
 ### Sankey nodes from links
@@ -964,7 +965,7 @@ nodes = [{"name": n} for n in sorted(all_names)]
 
 ### Step 1: Gather and verify data
 
-Identify the data source (query result, API response, log file, CSV, in-memory state). Extract values and verify they are numeric — replace nulls with 0 or omit the point. Confirm array lengths are consistent across all series and axis definitions.
+Identify the data source and units. Validate numeric values without changing their meaning: missing is not zero. Preserve `null` gaps in aligned line/bar data; omit points only when doing so does not shift category alignment. Aggregate duplicate category/series records deliberately rather than taking the first match. Keep chronological categories in chronological order, not alphabetic month-name order.
 
 ### Step 2: Choose chart type
 
@@ -972,7 +973,7 @@ Apply the selection guide above. When in doubt: bar for comparisons, line for tr
 
 ### Step 3: Write the config
 
-Copy the matching recipe. Replace all placeholder data with real values. Set a descriptive `"title.text"`. Apply all design standards: `"backgroundColor"`, `"color"` palette, axis styling, `"tooltip"`, `"legend"` (if multi-series), `"grid"` with `"containLabel": true`.
+Copy the matching recipe and replace placeholder data. Set a descriptive title, visible units, and legible colors. Apply axes and grid settings only to Cartesian charts; include a legend where it clarifies multiple series. Tooltips do not replace visible labels in a static export.
 
 ### Step 4: Name files descriptively
 
@@ -989,15 +990,17 @@ Adjust `-W` and `-H` from the size guidelines above based on chart type.
 
 ### Step 6: Confirm output
 
-Report the output file path to the user. In a UI context, display the image inline.
+Check the exit status and that the file exists and is nonempty, then view the rendered output for clipped labels, missing data, and misleading axes. Report its path and display it inline when supported. Do not overwrite an existing user file without approval.
 
 ### Handle missing tool
 
-If `charts` command is not found:
-```bash
-npm install -g charts-cli
-```
-Then re-run the render command.
+If `charts` is missing, explain the Node/npm requirement and offer the installation command from Installation. Do not change global packages automatically without authorization. Check `charts render --help` and `charts schema <type>` against the installed version before guessing options.
+
+## Canonical documentation
+
+- [charts-cli](https://github.com/Michaelliv/charts-cli)
+- [ECharts option reference](https://echarts.apache.org/en/option.html)
+- [ECharts server-side rendering](https://echarts.apache.org/handbook/en/how-to/cross-platform/server/)
 
 ---
 
@@ -1005,11 +1008,11 @@ Then re-run the render command.
 
 Before running `charts render`, verify:
 
-- [ ] `"backgroundColor": "#ffffff"` is set at the top level (omit only with `--theme dark`)
-- [ ] `"color"` palette array is present with the 6 standard hex values
+- [ ] Background and text have appropriate contrast (white by default; respect the user's theme or transparency requirement)
+- [ ] Colors and visible labels are legible and consistent; palette choices may be overridden by the user's theme
 - [ ] `"title.text"` is descriptive, not placeholder
-- [ ] All series `"data"` arrays contain only numbers — no strings, no `null` (use `0` or omit)
-- [ ] `xAxis.data` length matches every series `"data"` array length for axis-based charts
+- [ ] Data shape matches the series type (numbers, tuples, or named objects); missing values are not silently changed to zero
+- [ ] Category-aligned series match the corresponding category axis length; scatter/heatmap tuples use valid coordinates
 - [ ] Pie / funnel data uses `{ "name": "...", "value": N }` objects, not plain numbers
 - [ ] Sankey `"links"` only reference names that exist in `"nodes"`
 - [ ] Boxplot data rows have exactly 5 values: `[min, Q1, median, Q3, max]`
