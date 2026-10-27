@@ -92,7 +92,7 @@ magick -density 300 document.pdf -background white -alpha remove pages/page_%03d
 magick -density 192 icon.svg -resize 512x512 icon.png
 ```
 
-PDF input requires Ghostscript. "no delegate for this image format" means it isn't installed.
+PDF input requires Ghostscript and permission under ImageMagick's security policy. A missing-delegate error differs from a policy-denied error. Inspect `magick -list policy`; do not broadly disable security restrictions to process an untrusted document. Use page bounds and resource limits for large PDFs.
 
 ### Images → PDF, and icons
 
@@ -158,7 +158,7 @@ magick in.png -define png:compression-level=9 out.png      # PNG is lossless; le
 magick in.png -colors 256 png8:out.png                     # palette PNG, often 3–5x smaller for UI and screenshots
 ```
 
-`-strip` removes EXIF orientation, so run `-auto-orient` **before** `-strip`, or phone photos end up sideways. It also removes ICC profiles. For wide-gamut sources, convert first with `-colorspace sRGB` or `-profile sRGB.icc`.
+`-strip` removes EXIF orientation, so run `-auto-orient` **before** `-strip`, or phone photos end up sideways. It also removes ICC profiles. For an embedded wide-gamut ICC profile, convert to an actual sRGB ICC profile with `-profile /path/to/sRGB.icc` **before** stripping. `-colorspace sRGB` alone is not a substitute for ICC conversion of arbitrary profiled RGB images. Preserve the profile when accurate conversion is unavailable.
 
 ---
 
@@ -207,7 +207,7 @@ magick in.jpg -median 3 out.jpg                  # despeckle
 
 ```bash
 # Pixelate a 300x100 region at +50+400
-magick in.jpg \( +clone -crop 300x100+50+400 -scale 5% -scale 2000% \) -geometry +50+400 -composite out.jpg
+magick in.jpg \( +clone -crop 300x100+50+400 +repage -scale 5% -scale 2000% \) -geometry +50+400 -composite out.jpg
 # Solid redaction box
 magick in.jpg -fill black -draw 'rectangle 50,400 350,500' out.jpg
 ```
@@ -287,7 +287,11 @@ magick before.png after.png diff.png +append side_by_side.png                   
 Turn the metric into a pass/fail decision with the normalized value (0 = identical):
 
 ```bash
-d=$(magick compare -metric RMSE a.png b.png null: 2>&1 | sed -E 's/.*\(([0-9.e-]+)\).*/\1/')
+metric=$(magick compare -metric RMSE a.png b.png null: 2>&1)
+status=$?
+[ "$status" -le 1 ] || { printf '%s\n' "$metric" >&2; exit "$status"; }
+d=$(printf '%s\n' "$metric" | sed -nE 's/.*\(([0-9.eE+-]+)\).*/\1/p')
+[ -n "$d" ] || { echo 'Could not parse comparison metric' >&2; exit 1; }
 awk -v d="$d" 'BEGIN{exit !(d < 0.02)}' && echo same || echo different
 ```
 
@@ -302,7 +306,7 @@ awk -v d="$d" 'BEGIN{exit !(d < 0.02)}' && echo same || echo different
 `magick mogrify` **overwrites its inputs** unless you give it `-path`. Always use `-path` with an existing directory:
 
 ```bash
-mkdir -p web
+mkdir -p web thumbs
 magick mogrify -path web -auto-orient -resize '1600x1600>' -strip -quality 82 -format jpg *.jpg *.png
 magick mogrify -path thumbs -thumbnail 300x300 -format webp *.jpg
 ```
@@ -348,7 +352,7 @@ exiftool -overwrite_original -Copyright="© 2026 Name" -Artist="Name" web/*.webp
 
 ## Agent Rules
 
-1. **Never overwrite the input.** Use a new filename, and always pass `-path` to `mogrify`.
+1. **Never overwrite the input or an existing user output without approval.** Use a fresh destination, and always pass a distinct output directory with `-path` to `mogrify`. Check for basename collisions when converting multiple formats.
 2. **Use `magick`, never `convert`.**
 3. **Put settings before the input when they affect reading** (`-density`, `-size`), and put every operation before the output filename.
 4. **Quote geometry strings** containing `> < ! ^` and quote `'file[0]'` frame selectors.
