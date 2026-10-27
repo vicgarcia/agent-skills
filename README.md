@@ -84,4 +84,4 @@ mkdir -p ~/.pi/agent/skills/ffmpeg
 cp ffmpeg/SKILL.md ~/.pi/agent/skills/ffmpeg/
 ```
 
-Each skill lists its own install/requirements in its `README.md`. Re-copy after updating a skill.
+Each skill lists its requirements in its `README.md`. Re-copy after updating a skill.

@@ -23,18 +23,6 @@ With the skill installed, ask the agent to "write an AGENTS.md for this project"
 
 None. Applying the standards assumes the usual toolchains: [uv](https://docs.astral.sh/uv/) for Python, [Go](https://go.dev/dl/), and Node/npm for TypeScript. Claude Code reads `AGENTS.md` from v2.1.277, and only when no `CLAUDE.md` exists in or above the project.
 
-## Install
-
-```bash
-# Claude Code
-mkdir -p ~/.claude/skills/coding
-cp coding/SKILL.md ~/.claude/skills/coding/
-
-# pi
-mkdir -p ~/.pi/agent/skills/coding
-cp coding/SKILL.md ~/.pi/agent/skills/coding/
-```
-
 ## Canonical documentation
 
 - [AGENTS.md standard](https://agents.md)
