@@ -14,7 +14,7 @@ tesseract IMAGE OUTPUTBASE [-l LANGS] [--psm N] [--oem N] [--dpi N] [-c VAR=VALU
 
 - `OUTPUTBASE` gets an extension per output config: `out` → `out.txt`. Use `-` (or `stdout`) to print to stdout.
 - Input formats: PNG, JPEG, TIFF (including multi-page), BMP, PNM, GIF, WebP. **There is no PDF input.** Rasterize PDFs with ImageMagick first.
-- Progress and warnings ("Estimating resolution as 96") go to stderr. Silence them with `2>/dev/null`, or pass `--dpi`.
+- Progress, warnings, and errors go to stderr. Capture them in a task-specific log and check exit status before trusting empty output. The compact examples below suppress stderr only for already-verified inputs. `--dpi` supplies resolution information; it does not suppress all diagnostics.
 
 ```bash
 tesseract image.png - 2>/dev/null           # text to stdout
@@ -141,21 +141,28 @@ When the input is a `.txt` file, tesseract treats it as a list of image paths, o
 To pull text out of a talk, demo, or screen recording, extract one frame per visual change, drop near-duplicates, then OCR what's left. This needs ffmpeg for frame extraction and ImageMagick for duplicate detection; the OCR step is plain tesseract.
 
 ```bash
-mkdir -p slides
+# Use a fresh directory so duplicate removal never deletes user files.
+slides=$(mktemp -d "${TMPDIR:-/tmp}/ocr-slides.XXXXXX")
 
 # 1. One frame per visual change (plus frame 0). Low threshold on purpose; see note below.
-ffmpeg -y -nostdin -i talk.mp4 -vf "select='eq(n,0)+gt(scene,0.02)',scale=1920:-2" -fps_mode vfr slides/s_%03d.png
+ffmpeg -y -nostdin -i talk.mp4 -vf "select='eq(n,0)+gt(scene,0.02)',scale=1920:-2" -fps_mode vfr "$slides/s_%03d.png"
 
 # 2. Drop near-duplicates: compare each frame to the last one kept
-prev=""; for f in slides/s_*.png; do
+prev=""; for f in "$slides"/s_*.png; do
+  [ -f "$f" ] || continue
   if [ -n "$prev" ]; then
-    d=$(magick compare -metric RMSE "$prev" "$f" null: 2>&1 | sed -E 's/.*\(([0-9.e-]+)\).*/\1/')
+    metric=$(magick compare -metric RMSE "$prev" "$f" null: 2>&1)
+    status=$?
+    [ "$status" -le 1 ] || { printf '%s\n' "$metric" >&2; exit "$status"; }
+    d=$(printf '%s\n' "$metric" | sed -nE 's/.*\(([0-9.eE+-]+)\).*/\1/p')
+    [ -n "$d" ] || { echo 'Could not parse comparison metric' >&2; exit 1; }
     awk -v d="$d" 'BEGIN{exit !(d < 0.02)}' && { rm "$f"; continue; }
   fi; prev="$f"
 done
 
 # 3. OCR each remaining slide
-for f in slides/s_*.png; do
+for f in "$slides"/s_*.png; do
+  [ -f "$f" ] || continue
   echo "=== $f"; magick "$f" -colorspace Gray -resize 150% png:- | tesseract stdin - --psm 3 2>/dev/null
 done > slides.txt
 ```
@@ -168,7 +175,7 @@ To align each slide's text with the timeline, list the change timestamps with th
 ffmpeg -nostdin -hide_banner -i talk.mp4 -vf "select='gt(scene,0.02)',showinfo" -an -f null - 2>&1 | grep -o 'pts_time:[0-9.]*' | cut -d: -f2
 ```
 
-Frame 0 is always kept, so the list is one shorter than the slide count. Raise the duplicate threshold (`0.02` in the `awk` test) if near-identical slides survive; lower it if distinct slides with small edits get merged. Slides with images or colored backgrounds usually need a higher scene threshold than text-only ones, so check the frame count before OCRing.
+This timestamp command excludes frame 0 and runs before deduplication, so its rows do not map one-to-one to the final kept images. For exact alignment, capture timestamps alongside extraction using `showinfo` with the identical select expression, then retain each kept image's original timestamp through deduplication. Raise the duplicate threshold (`0.02` in the `awk` test) if near-identical slides survive; lower it if distinct slides with small edits get merged. Slides with images or colored backgrounds usually need a higher scene threshold than text-only ones, so check the frame count before OCRing.
 
 ---
 
@@ -203,7 +210,7 @@ Language data files (`eng.traineddata`, `deu.traineddata`, …) live in the `tes
 
 ## Platform Notes (Windows / Git Bash)
 
-- **Null device:** `2>/dev/null` works under Git Bash. In native `cmd`/PowerShell use `2>NUL`.
+- **Null device:** `2>/dev/null` works under Git Bash; use `2>NUL` in cmd.exe and `2>$null` in PowerShell.
 - **ImageMagick on Windows:** always invoke it as `magick`, never `convert` (on Windows `convert` is the system disk utility). ImageMagick 7 is required for the `magick` entry point.
 - **tessdata location:** the UB-Mannheim Windows installer sets `TESSDATA_PREFIX` and installs language packs you select during setup. Re-run the installer to add languages, or drop `.traineddata` files into the `tessdata` folder.
 - **Git Bash path conversion:** arguments starting with `/` may be rewritten to Windows paths. File paths are fine; if a non-path option is mangled, prefix the command with `MSYS_NO_PATHCONV=1`.
@@ -212,7 +219,7 @@ Language data files (`eng.traineddata`, `deu.traineddata`, …) live in the `tes
 
 ## Agent Rules
 
-1. **Send stderr to the null device** (`2>/dev/null`) or capture it separately so warnings don't mix into the text.
+1. **Keep stderr separate and check failures.** Capture diagnostics in a task-specific log; suppress them only after verifying success. In Bash pipelines use `set -o pipefail` so preprocessing/OCR failures are not hidden.
 2. **Preprocess before tuning options.** Grayscale, upscale small text, invert dark mode, crop to the region.
 3. **Pick `--psm` deliberately:** 3 for pages, 6 for a block, 7 for a line, 11 for scattered UI or sign text.
 4. **Check confidence via `tsv`** when accuracy matters, and report uncertainty instead of presenting garbled output as fact.
