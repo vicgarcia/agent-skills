@@ -42,7 +42,7 @@ exiftool --ThumbnailImage image.jpg    # All tags except the embedded thumbnail
 exiftool --MakerNotes image.jpg        # Exclude maker notes
 ```
 
-`-f` forces printing even when a tag is absent (shows "(not found)"). `-a` allows duplicate tag names to appear, useful when multiple groups define the same tag.
+`-f` forces printing even when a tag is absent (shows `-` by default). `-a` allows duplicate tag names to appear, useful when multiple groups define the same tag.
 
 ---
 
@@ -198,12 +198,14 @@ exiftool '-DateTimeOriginal+=0:0:0 1:0:0' image.jpg   # Add 1 hour
 exiftool '-DateTimeOriginal-=0:0:1 0:0:0' image.jpg   # Subtract 1 day
 ```
 
-### Shift all date/time tags together
+### Shift the common EXIF capture dates together
 
 ```bash
-exiftool -globalTimeShift "+0:0:0 1:0:0" image.jpg      # All date tags +1 hour
-exiftool -globalTimeShift "-0:0:0 0:30:0" *.jpg         # All files, -30 minutes
+exiftool '-AllDates+=0:0:0 1:0:0' image.jpg       # DateTimeOriginal, CreateDate, ModifyDate +1 hour
+exiftool '-AllDates-=0:0:0 0:30:0' *.jpg          # Those three tags, -30 minutes
 ```
+
+`AllDates` is not every timestamp: select other groups/tags explicitly if needed. `-globalTimeShift` shifts extracted/formatted values; by itself it does **not** write dates back to files. Preserve backups and read the tags back after writing.
 
 ### Fix timezone / offset
 
@@ -278,8 +280,8 @@ exiftool -restore_original image.jpg
 Delete backups when satisfied:
 
 ```bash
-exiftool -delete_original image.jpg     # Only deletes files exiftool itself created
-exiftool -delete_original! image.jpg    # Also deletes _original files not created by exiftool
+exiftool -delete_original image.jpg     # Prompts before deleting the corresponding _original backup
+exiftool -delete_original! image.jpg    # Deletes the backup without confirmation
 ```
 
 ---
@@ -304,11 +306,11 @@ exiftool -tagsFromFile src.jpg -CreateDate -GPS:All dst.jpg
 Converting with magick or ffmpeg drops or mangles metadata. Copy it back from the original:
 
 ```bash
-exiftool -overwrite_original -tagsFromFile src.heic -all:all -unsafe dst.jpg          # after magick HEIC → JPG
-exiftool -overwrite_original -api QuickTimeUTC -tagsFromFile src.mov -all:all dst.mp4  # after an ffmpeg transcode
+exiftool -tagsFromFile src.heic -DateTimeOriginal -CreateDate -Copyright -Artist dst.jpg
+exiftool -api QuickTimeUTC -tagsFromFile src.mov -CreateDate -CreationDate dst.mp4
 ```
 
-After `-auto-orient` (magick) or an ffmpeg transcode the pixels are already upright, so reset the copied orientation to avoid a double rotation: `exiftool -overwrite_original -Orientation#=1 dst.jpg`.
+Prefer an allowlist after transforming pixels. Blind `-all:all -unsafe` copying can restore stale dimensions, thumbnails, orientation, or GPS. If copying orientation to an already auto-oriented JPEG, reset it to `-Orientation#=1`; video rotation uses different QuickTime/display-matrix fields, so inspect separately. Verify dates, dimensions, orientation, and privacy-sensitive tags afterward.
 
 ### Exclude tags from copy
 
@@ -459,14 +461,14 @@ exiftool -all= -overwrite_original out.jpg
 ffmpeg -y -nostdin -i in.mov -map 0:v -map 0:a? -map_metadata -1 -map_chapters -1 -c copy -fflags +bitexact out.mp4
 exiftool -all= -overwrite_original out.mp4
 
-# Verify: ask only for tags that can identify someone. Tags that are absent print nothing,
-# so a clean file shows just its filename header.
+# First-pass check for common identifying tags (not an exhaustive privacy audit).
+# Missing tags print nothing.
 exiftool -G1 -a -s -GPS:all -Make -Model '-*Serial*' -Artist -Author -Creator -Title -Comment -Description -Copyright -Software -CreationDate -LocationInformation out.jpg out.mp4
 ```
 
 A full `exiftool -G1 -a -s` dump of a clean video still lists ~90 structural QuickTime tags (track layout, timescales, handler names), so grepping that output buries the signal. Use the targeted check above. It reports each leak in an unscrubbed file (GPS, camera, title, location) and nothing for a scrubbed one.
 
-Neither tool alone is enough for video: some QuickTime atoms survive one tool and not the other, so run both and then verify.
+For supported video formats, this combination can remove more than either tool alone, but it is not a universal sanitization guarantee. Inspect a full grouped dump too, and use `-ee` when embedded/timed telemetry is relevant. Unknown, proprietary, or embedded metadata can survive; ExifTool cannot delete every tag in every format. Check warnings, format support, and the output's playback.
 
 To keep a few specific tags (ownership, color profile) while removing everything else, **re-copy them from the file itself after wiping**:
 
@@ -542,7 +544,7 @@ Write arguments to `commands.txt` one per line. Send `-execute` to run the buffe
 
 exiftool runs normally as a native Windows executable under Git Bash. A couple of traps:
 
-- **Quoting `<` and `>`:** tag-redirect arguments like `'-FileName<DateTimeOriginal'` must be single-quoted, or the shell treats `<`/`>` as redirection and silently does the wrong thing. This matters under both bash and cmd/PowerShell.
+- **Quoting `<` and `>`:** the examples use Bash single quotes to prevent redirection and `$Tag` expansion; PowerShell also accepts single-quoted literal arguments. Native `cmd.exe` does not treat single quotes as quoting—use double quotes there.
 - **The backup file** is named `FILE_original` (the suffix is appended to the full name, extension included): `photo.jpg` → `photo.jpg_original`.
 - **Git Bash path conversion:** arguments starting with `/` are rewritten to Windows paths; prefix with `MSYS_NO_PATHCONV=1` if a non-path argument is mangled.
 - The Windows build is distributed as `exiftool(-k).exe` — rename it to `exiftool.exe` (or install via winget: `OliverBetz.ExifTool`) so it is callable as `exiftool`.
@@ -556,7 +558,7 @@ exiftool runs normally as a native Windows executable under Git Bash. A couple o
 3. **Use `-n` for raw numeric values** — GPS coordinates, orientation integers, and other converted values need `-n` to get machine-readable form (e.g., decimal degrees instead of DMS).
 4. **Quote tag assignments containing `<`** — shell redirection will silently swallow arguments like `'-Title<Description'` if unquoted.
 5. **Use `-s` to discover tag names** — the default output shows human descriptions; `-s` shows the actual tag names needed for writing and scripting.
-6. **Test batch writes with `-p` first** — preview the intended transformation with `-p '$FileName ...'` before running a destructive batch write or rename.
+6. **Test batch changes on copies first.** `-p` previews extracted values, not the exact effects of a write. For renames use `TestName`; for metadata writes, inspect a copied sample before applying to originals.
 7. **Do not try to delete MakerNotes tags individually** — MakerNotes are "Permanent": individual tags can be edited but not created or deleted. Camera software is often brittle about the structure it expects. To remove maker notes entirely, delete the whole block: `-MakerNotes:All=` or `-IFD0:MakerNotes=`.
 8. **Use built-in help to discover tags and groups** — when working with a specific file, `exiftool -s FILE` or `exiftool -g1 -s FILE` shows exactly which tags are present with their writable names. For capability discovery: `exiftool -listw` lists all writable tags; `exiftool -listwf` lists writable file extensions; `exiftool -listd` lists deletable groups; `exiftool -listg` / `-listg1` enumerate group names by family. The [tag names reference](https://exiftool.org/TagNames/) is the most readable way to browse tags by format and group.
 
