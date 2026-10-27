@@ -171,7 +171,7 @@ These come up in every project.
   ```
 
 - **Name the magic numbers.** Make them module-level `UPPER_SNAKE` constants with a comment saying where the value comes from.
-- **Log messages are lowercase** (except proper names), short, and structured: put the message plus key/value context in the log call (`"recordings request", camera=…, day=…`), not in string interpolation.
+- **Log messages are lowercase** (except proper names), short, and structured. Use the logger's supported API: Python stdlib uses `logger.info("recordings request", extra={"camera": camera, "day": day})`; keyword context such as `camera=...` requires a logger that supports it.
 - **One consistent error shape per interface.** A CLI prints `Error: …` to stderr and exits non-zero. An MCP tool returns `{"error": "…", "success": False}`. An HTTP API uses status codes with a `detail`. Pick one per surface and never mix them.
 - **Validate at the boundary, trust inside.** Parse and validate input where it enters (argparse, pydantic, query params). Reject unknown fields rather than silently ignoring typos.
 - **Config from the environment.** Read env vars, then `.env`. Commit a documented template (`.env.template`, or `.env.example` where the repo already uses that) with every setting, its default, and a comment. Secrets live only in `.env`, which is always gitignored.
@@ -325,7 +325,7 @@ Conventions for these CLIs:
 - **Errors go to stderr, prefixed `Error:`**, and exit 1. Data goes to stdout. Warnings (`Warning: …`) go to stderr.
 - **Credentials come from env vars** (`TOOL_USER`, `TOOL_TOKEN`), optionally overridable by a flag. Say exactly which var is missing and how to get it.
 - **Destructive or outbound actions get `--dry-run`.**
-- **Module-name shadowing:** a script named `gmail.py` in a repo named `gmail.py` shadows the stdlib/library package it imports (`email`, `roborock`). Strip the script's own directory from `sys.path` before those imports, and leave a comment saying why and "do not remove".
+- **Module-name shadowing:** a script shadows an import only when its module name collides with it: `roborock.py` importing the `roborock` library imports itself. Prefer renaming a colliding file. When the CLI name must stay, strip the script's own directory from `sys.path` (and pop any half-imported module from `sys.modules`) before the import, with a comment saying why and "do not remove".
 - **Add a command in one change:** client method → `cmd_` handler → subparser + dispatch entry → epilog example → `SKILL.md` → `README.md`.
 
 ### Archetype 2 — service / package
@@ -495,10 +495,11 @@ ui/src/
   }
 
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(`/api${path}`, {
-      ...init,
-      headers: { 'content-type': 'application/json', ...init?.headers },
-    })
+    const headers = new Headers(init?.headers)
+    if (typeof init?.body === 'string' && !headers.has('content-type')) {
+      headers.set('content-type', 'application/json')
+    }
+    const res = await fetch(`/api${path}`, { ...init, headers })
     if (res.status === 204) return undefined as T
     const body = await res.json().catch(() => null)
     if (!res.ok) throw new ApiError(res.status, body?.detail)
