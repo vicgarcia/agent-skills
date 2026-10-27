@@ -11,7 +11,7 @@ The skill itself is [`SKILL.md`](SKILL.md). All content lives in that one file; 
 - **Principles** — explicit over clever, descriptive names, comments that explain why, lowercase structured logs, one error shape per interface, config from env with a committed template.
 - **Python** — uv, ruff, pytest; the single-file PEP 723 CLI archetype and the FastAPI/pydantic-settings service archetype; style and testing with fakes, `TestClient`, and VCR cassettes.
 - **JavaScript / TypeScript** — no-build vanilla JS for small UIs; React + Vite + oxlint + strict TypeScript for apps; a typed `fetch` client and abortable data hooks.
-- **Go** — stdlib-first `net/http` and `slog`, `internal/` per domain, thin handlers, embedded UI, graceful shutdown.
+- **Go** — `internal/` per domain, thin handlers, structured `slog`, env helpers, embedded UI, graceful shutdown; recommendations beyond current practice are marked as such.
 - **Containers and CI** — uv and multi-stage Go images, non-root users, healthchecks, compose conventions, and GHCR multi-arch builds.
 - **Documentation** — README for people, SKILL.md for agents using a tool, AGENTS.md for agents working on it; docs live next to code and change with it.
 

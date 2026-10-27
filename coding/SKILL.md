@@ -407,7 +407,7 @@ Service conventions:
 - **Wrap each upstream in its own client class** with its own error type (`FAAClient`/`FAAError`). Routes translate those errors to HTTP statuses.
 - **Use `Annotated[...]` for dependencies and query constraints** (`DbSession = Annotated[Session, Depends(get_session)]`, `Query(ge=0, le=200)`). Give return-type hints to response schemas.
 - **Strict input:** pydantic models reject unknown fields (`extra="forbid"`) for request bodies.
-- **Every container service has `/healthz`** returning `{"ok": True}`.
+- **Every container service has a health endpoint** returning `{"ok": True}`. Use the name the project already has (`/healthz` in kestrel-map, `/health` in dji-planner and securitron); new projects use `/healthz`.
 - **Log with `logging.getLogger("<area>")`**, using lowercase messages. Don't `print` in services.
 - **Name units:** `_seconds`, `_ms`, `_m`, `_ft`. Document the units in the API README.
 - **Migrations:** `uv run alembic revision --autogenerate -m "..."`, then check `uv run alembic check` in the run-after-changes list. Import every model in `models/__init__.py` so autogenerate sees it.
@@ -529,7 +529,7 @@ ui/src/
 
 - **Go 1.22+**; new modules use the current stable release. `gofmt` (or `go fmt ./...`) and `go vet ./...` must be clean.
 - **Module path `github.com/vicgarcia/<repo>`.**
-- **Stdlib first.** New code uses `net/http` with 1.22 method/pattern routing (`mux.HandleFunc("GET /cameras/{camera}/recordings", …)`, `r.PathValue("camera")`), `log/slog`, `embed`, and `encoding/json`. Existing gorilla/mux code stays until there's a reason to move.
+- **Stdlib first:** `log/slog`, `embed`, `encoding/json`. Existing projects route with gorilla/mux. For a new module, prefer the stdlib router's method/pattern routing from Go 1.22 (`mux.HandleFunc("GET /cameras/{camera}/recordings", …)`, `request.PathValue("camera")`). That is a recommendation, not existing practice. Don't migrate working gorilla/mux code without a reason.
 - **Few dependencies.** Each one needs a reason (gocv for OpenCV, a JWT library for auth).
 
 ### Layout
@@ -558,7 +558,7 @@ api/
 - **Doc comment on every exported identifier,** starting with its name: `// GetRecordingsByDay returns recordings for a specific camera and day`.
 - **Descriptive names,** including in handlers: `func RecordingsHandler(writer http.ResponseWriter, request *http.Request)`.
 - **Always `return` after writing an error response.** A missing `return` after `http.Error` is a real bug in past code.
-- **Wrap errors with context** (`fmt.Errorf("reading %s: %w", path, err)`) and handle each error once. Either log it or return it, not both.
+- **Handle each error once:** domain code returns it, and the handler logs it and writes the response. When an error crosses a package boundary, add context with `fmt.Errorf("reading %s: %w", path, err)`. That's recommended; existing code mostly returns errors bare.
 - **Logging is structured `slog`** with lowercase messages and key/value pairs: `logger.Error("error querying recordings", "camera", name, "day", day, "error", err)`. Debug level is toggled by a `DEBUG` env var.
 - **Config comes from env vars through `internal/env` helpers** with defaults. No config files unless the domain needs one (YAML for camera triggers).
 - **Graceful shutdown:** `signal.Notify` on `SIGINT`/`SIGTERM`. Run the server and background tickers in goroutines, stop them on signal, and close channels to end workers.
@@ -566,6 +566,8 @@ api/
 - **Use `json:"snake_case"` struct tags**, and `json:"-"` for internal fields like file paths.
 
 ### Go testing
+
+The existing Go projects have no tests yet; securitron tests manually against a running stack. When adding tests (recommended for domain packages like `media/`):
 
 - **Table-driven tests** in `_test.go` beside the code, using the stdlib `testing` package and `httptest` for handlers. Run them with `go test ./...`.
 - Use `t.TempDir()` for filesystem tests. Avoid assertion libraries unless the project already uses one.
@@ -579,7 +581,7 @@ api/
   - Copy `pyproject.toml uv.lock` first and `uv sync --frozen --no-dev --no-install-project` so the layer caches, then copy the code.
   - Set `UV_COMPILE_BYTECODE=1`, `UV_LINK_MODE=copy`, `PYTHONUNBUFFERED=1`.
 - **Go image:** a multi-stage build. Build the UI (`npm ci && npm run build`), then the Go binary, then copy only the binary and runtime deps into a slim final stage.
-- **Run as a non-root user** (`useradd` + `USER`). Add a `HEALTHCHECK` against `/healthz`. Put a header comment in the Dockerfile with the run command and URL.
+- **Run as a non-root user** (`useradd` + `USER`). Add a `HEALTHCHECK` against the health endpoint. Put a header comment in the Dockerfile with the run command and URL.
 - **Bind-mount permissions:** pass `HOST_UID`/`HOST_GID` via `.env` (not `UID`/`GID`, which bash reserves). Remap the app user in an entrypoint with `usermod`/`gosu`.
 - **Compose:** `restart: unless-stopped`, `env_file: [{path: .env, required: false}]`, ports parameterized with defaults (`"${KESTREL_PORT:-8100}:8000"`). Pin the project name when compose lives in a subdirectory.
 - **Cron-style jobs** use supercronic with a bind-mounted crontab (`supercronic -inotify /crontab`), so schedule edits need no rebuild. Keep a tracked `crontab.template` and gitignore the personal `crontab`.
